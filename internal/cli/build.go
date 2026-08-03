@@ -3,29 +3,45 @@ package cli
 import (
 	"strings"
 
+	"github.com/ldaidone/go-graphed/internal/config"
 	"github.com/ldaidone/go-graphed/pkg/graphed"
 	"github.com/spf13/cobra"
 )
 
 var (
-	output string
-	format string
+	output     string
+	format     string
+	modelPath  string
+	dimensions int
+	dbRoot     string
 )
 
-// buildCmd is registered under rootCmd in init() below.
+// buildCmd is registered under RootCmd in init() below.
 // Keeping the command definition and its flag wiring together
 // makes it easy to see everything a subcommand needs in one place.
 var buildCmd = &cobra.Command{
-	Use:   "build <source>",
-	Short: "Build a knowledge graph",
-	Args:  cobra.ExactArgs(1),
-
+	Use:     "build <source>",
+	Short:   "Build a knowledge graph",
+	Args:    cobra.ExactArgs(1),
+	GroupID: "core",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load(config.Overrides{
+			ModelPath:  modelPath,
+			Dimensions: dimensions,
+			DBRoot:     dbRoot,
+		})
+		if err != nil {
+			return err
+		}
+
 		var opts graphed.BuildOptions
 		opts = graphed.BuildOptions{
-			Root:   cleanSourcePath(args[0]),
-			Output: output,
-			Format: format,
+			Root:       cleanSourcePath(args[0]),
+			Output:     output,
+			Format:     format,
+			ModelPath:  cfg.ModelPath,
+			Dimensions: cfg.Dimensions,
+			DBRoot:     cfg.DBRoot,
 		}
 		return graphed.Build(opts)
 	},
@@ -73,5 +89,26 @@ func init() {
 		"Output format",
 	)
 
-	rootCmd.AddCommand(buildCmd)
+	buildCmd.Flags().StringVar(
+		&modelPath,
+		"model-path",
+		"",
+		"Path to a gte embedding model (defaults to GRAPHEAD_MODEL_PATH or ./get-small.gtemodel)",
+	)
+
+	buildCmd.Flags().IntVar(
+		&dimensions,
+		"dimensions",
+		config.DefaultDimensions,
+		"Embedding vector width of the model",
+	)
+
+	buildCmd.Flags().StringVar(
+		&dbRoot,
+		"db-root",
+		"",
+		"Base config directory for the vector store (defaults to ~/.config/graphed)",
+	)
+
+	RootCmd.AddCommand(buildCmd)
 }

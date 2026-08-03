@@ -4,18 +4,29 @@ package cli
 
 import "github.com/spf13/cobra"
 
-// rootCmd is the top-level command that every subcommand attaches to.
+// RootCmd is the top-level command that every subcommand attaches to.
 // Defining it here (rather than in an init func) keeps the
 // registration order explicit and avoids hidden side effects.
-var rootCmd = &cobra.Command{
+var RootCmd = &cobra.Command{
 	Use:   "kg",
 	Short: "Generate knowledge graphs from source code",
 	Long: `go-graphed analyzes source code and generates
 language-agnostic knowledge graphs.`,
 }
 
+// 1. Declare the operational tiers as package variables
+var (
+	CoreGroup  = &cobra.Group{ID: "core", Title: "Core Commands:"}
+	InfraGroup = &cobra.Group{ID: "infra", Title: "Infrastructure Protocols:"}
+)
+
+func init() {
+	// 2. Register groups directly onto the root entry point
+	RootCmd.AddGroup(CoreGroup, InfraGroup)
+}
+
 // Execute runs the root command. Separating this from main() lets
 // the CLI layer be exercised independently in future tests.
 func Execute() error {
-	return rootCmd.Execute()
+	return RootCmd.Execute()
 }

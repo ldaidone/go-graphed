@@ -1,37 +1,41 @@
 package parser
 
 import (
-	"context"
+	_ "context"
 	"fmt"
 	"os"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
-	sitter "github.com/smacker/go-tree-sitter"
-	"github.com/smacker/go-tree-sitter/golang"
+	sitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 // extractGoData uses tree-sitter to parse Go source and pull out
-// type declarations (structs and interfaces).  Tree-sitter is
+// type declarations (structs and interfaces). Tree-sitter is
 // chosen over go/ast because it is resilient to syntax errors
 // and can be extended to other grammars without a full compiler.
 func extractGoData(path string) ([]ir.Entity, error) {
-	content, err := os.ReadFile(path)
+	var err error
+	var content []byte
+	var tree *sitter.Tree
+
+	content, err = os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read file: %w", err)
 	}
 
-	// Initialize tree-sitter parser for Go
-	parser := sitter.NewParser()
-	parser.SetLanguage(golang.GetLanguage())
+	lang := grammars.GoLanguage()
+	// Initialize pure-Go tree-sitter parser for Go
+	parser := sitter.NewParser(lang)
 
-	tree, err := parser.ParseCtx(context.Background(), nil, content)
+	tree, err = parser.Parse(content)
 	if err != nil {
 		return nil, fmt.Errorf("tree-sitter failed parsing: %w", err)
 	}
 
 	var entities []ir.Entity
 
-	// Recursive AST walker helper.  Using a closure lets the walker
+	// Recursive AST walker helper. Using a closure lets the walker
 	// share the `entities` slice without threading it through
 	// function arguments at every recursion level.
 	var inspectNode func(*sitter.Node)
@@ -43,13 +47,13 @@ func extractGoData(path string) ([]ir.Entity, error) {
 		// We only care about type_spec nodes because that is where
 		// Go defines structs and interfaces -- the two entity kinds
 		// the analyzer can currently reason about.
-		if n.Type() == "type_spec" {
-			nameNode := n.ChildByFieldName("name")
-			typeNode := n.ChildByFieldName("type")
+		if n.Type(lang) == "type_spec" {
+			nameNode := n.ChildByFieldName("name", lang)
+			typeNode := n.ChildByFieldName("type", lang)
 
 			if nameNode != nil && typeNode != nil {
 				entityName := string(content[nameNode.StartByte():nameNode.EndByte()])
-				nodeTypeStr := typeNode.Type() // "struct_type" or "interface_type"
+				nodeTypeStr := typeNode.Type(lang) // "struct_type" or "interface_type"
 
 				if nodeTypeStr == "struct_type" || nodeTypeStr == "interface_type" {
 					kind := "struct"
