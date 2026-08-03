@@ -5,7 +5,7 @@ import (
 )
 
 func TestRootCmd_HasSubcommands(t *testing.T) {
-	for _, name := range []string{"build", "mcp"} {
+	for _, name := range []string{"build", "mcp", "init", "install"} {
 		cmd, _, err := RootCmd.Find([]string{name})
 		if err != nil || cmd == nil {
 			t.Errorf("root command missing subcommand %q", name)
@@ -18,7 +18,7 @@ func TestRootCmd_GroupsRegistered(t *testing.T) {
 	for _, g := range RootCmd.Groups() {
 		found[g.ID] = true
 	}
-	for _, id := range []string{"core", "infra"} {
+	for _, id := range []string{"core", "infra", "setup"} {
 		if !found[id] {
 			t.Errorf("root command missing group %q", id)
 		}

@@ -165,3 +165,203 @@ func TestLoad_InvalidEnvDimensionsFallsBack(t *testing.T) {
 		t.Errorf("Dimensions = %d, want 0 (auto-detect fallback)", s.Dimensions)
 	}
 }
+
+// isolateConfigFiles resets every source that could leak between tests and
+// points HOME/cwd at isolated temp dirs.
+func isolateConfigFiles(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv(EnvModelPath, "")
+	t.Setenv(EnvDBRoot, "")
+	t.Setenv(EnvDimensions, "")
+	t.Setenv(EnvConfigFile, "")
+	t.Setenv("HOME", home)
+	t.Chdir(t.TempDir())
+}
+
+func TestLoad_ConfigFileYAML(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "graphed.yaml"), []byte(`
+model_path: /file/model.gtemodel
+db_root: /file/dbroot
+dimensions: 512
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/file/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want config file value", s.ModelPath)
+	}
+	if s.DBRoot != "/file/dbroot" {
+		t.Errorf("DBRoot = %q, want config file value", s.DBRoot)
+	}
+	if s.Dimensions != 512 {
+		t.Errorf("Dimensions = %d, want 512", s.Dimensions)
+	}
+}
+
+func TestLoad_ConfigFileJSONExplicit(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "custom.json")
+	if err := os.WriteFile(cfg, []byte(`{"model_path": "/file/model.gtemodel", "db_root": "/file/dbroot", "dimensions": 768}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Setenv(EnvConfigFile, cfg)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/file/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want config file value", s.ModelPath)
+	}
+	if s.Dimensions != 768 {
+		t.Errorf("Dimensions = %d, want 768", s.Dimensions)
+	}
+}
+
+func TestLoad_ConfigFileTOML(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "graphed.toml"), []byte(`
+model_path = "/file/model.gtemodel"
+db_root = "/file/dbroot"
+dimensions = 256
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/file/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want config file value", s.ModelPath)
+	}
+	if s.Dimensions != 256 {
+		t.Errorf("Dimensions = %d, want 256", s.Dimensions)
+	}
+}
+
+func TestLoad_DotGraphedConfigFile(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".graphed.yaml"), []byte("model_path: /file/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/file/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want config file value", s.ModelPath)
+	}
+}
+
+func TestLoad_UserConfigDir(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".config", "graphed", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("model_path: /home/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/home/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want user config value", s.ModelPath)
+	}
+}
+
+func TestLoad_DotEnvBeatsConfigFile(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "graphed.yaml"), []byte("model_path: /file/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("GRAPHEAD_MODEL_PATH=/envfile/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/envfile/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want .env value", s.ModelPath)
+	}
+}
+
+func TestLoad_EnvBeatsDotEnv(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("GRAPHEAD_MODEL_PATH=/envfile/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+	t.Setenv(EnvModelPath, "/env/model.gtemodel")
+
+	s, err := Load(Overrides{})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/env/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want environment value", s.ModelPath)
+	}
+}
+
+func TestLoad_OverrideBeatsEverything(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "graphed.yaml"), []byte("model_path: /file/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("GRAPHEAD_MODEL_PATH=/envfile/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+	t.Setenv(EnvModelPath, "/env/model.gtemodel")
+
+	s, err := Load(Overrides{ModelPath: "/flag/model.gtemodel"})
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if s.ModelPath != "/flag/model.gtemodel" {
+		t.Errorf("ModelPath = %q, want override value", s.ModelPath)
+	}
+}
+
+func TestResolveModelPath_ConfigFileFallback(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "graphed.yaml"), []byte("model_path: /file/model.gtemodel\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isolateConfigFiles(t, home)
+	t.Chdir(dir)
+
+	if got := ResolveModelPath(""); got != "/file/model.gtemodel" {
+		t.Errorf("ResolveModelPath() = %q, want config file value", got)
+	}
+}

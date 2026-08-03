@@ -18,11 +18,12 @@ language-agnostic knowledge graphs.`,
 var (
 	CoreGroup  = &cobra.Group{ID: "core", Title: "Core Commands:"}
 	InfraGroup = &cobra.Group{ID: "infra", Title: "Infrastructure Protocols:"}
+	SetupGroup = &cobra.Group{ID: "setup", Title: "Setup Commands:"}
 )
 
 func init() {
 	// 2. Register groups directly onto the root entry point
-	RootCmd.AddGroup(CoreGroup, InfraGroup)
+	RootCmd.AddGroup(CoreGroup, InfraGroup, SetupGroup)
 }
 
 // Execute runs the root command. Separating this from main() lets

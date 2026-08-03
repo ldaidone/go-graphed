@@ -14,12 +14,14 @@ Language-agnostic knowledge graph generator for source code.
 ## Features
 
 - **Language-agnostic pipeline**: Scanner, parser, analyzer, and exporter are fully decoupled — add a new language by writing one extractor function
-- **Tree-sitter powered**: Uses tree-sitter for Go source parsing, resilient to syntax errors and extensible to other grammars
+- **Tree-sitter powered**: Uses tree-sitter for Go and Markdown parsing, resilient to syntax errors and extensible to other grammars
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
 - **Document-to-code linking**: Connects Markdown/PDF documentation to the code entities they mention
 - **Flexible IR**: Intermediate representation supports documents, entities, and weighted links with metadata
 - **Extensible exporters**: JSON output today; GraphML, RDF, or Cypher can be added as new exporter files
 - **Go-style path support**: Accepts `./...` wildcard syntax familiar to Go developers
+- **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns
+- **Agent-ready setup**: `kg init` emits per-project agent rules and `kg install` puts the binary + model on PATH globally
 
 ## Installation
 
@@ -48,7 +50,59 @@ go build -o kg ./cmd/kg
 
 # Use Go-style wildcard paths
 ./kg build ./...
+
+# Honor gitignore and skip build artifacts
+./kg build . --exclude vendor/ --exclude '*.gen.go'
+
+# Parallelize parsing across 8 workers
+./kg build . --jobs 8
 ```
+
+### Agent Rules and Global Install
+
+```bash
+# Generate per-project agent rules wiring the MCP server into the agent loop
+# so tools query the local graph before calling cloud models.
+#
+# Tools are detected from the project's existing rule files (CLAUDE.md,
+# GEMINI.md, .github/copilot-instructions.md, .cursor/rules/, ...) and
+# AGENTS.md is always written as the default rule. Existing files are never
+# overwritten: the kg block is appended, and re-runs replace it in place.
+./kg init
+
+# Override detection and emit rules for specific ecosystems
+./kg init --targets claude,copilot,gemini
+./kg init --all   # every ecosystem: agents, claude, gemini, copilot, codex, cursor, cline, windsurf
+
+# Build the graph first so the snapshot the rules reference exists
+./kg init --build
+
+# If the graph snapshot is missing, kg init prints a reminder to run kg build.
+
+# Install the binary and the bundled embedding model for global use
+# (binary into GOBIN/GOPATH/bin, model into ~/.config/graphed/models)
+./kg install
+```
+
+### Configuration
+
+Settings resolve through an ordered chain (highest precedence first):
+
+`CLI flags → environment (GRAPHEAD_*) → .env file → config file → defaults`
+
+Config files are read with [viper](https://github.com/spf13/viper) in JSON, YAML,
+or TOML. Discovery order: `GRAPHEAD_CONFIG_FILE`, then `./graphed.*`, then
+`./.graphed.*`, then `~/.config/graphed/config.*`.
+
+```yaml
+# ~/.config/graphed/config.yaml
+model_path: /absolute/path/to/get-small.gtemodel
+db_root: /absolute/path/to/store
+dimensions: 384   # 0 = auto-detect from the model
+```
+
+Environment variables: `GRAPHEAD_MODEL_PATH`, `GRAPHEAD_DB_ROOT`,
+`GRAPHEAD_DIMENSIONS`, `GRAPHEAD_CONFIG_FILE`.
 
 ### Programmatic Usage
 
@@ -120,7 +174,7 @@ func main() {
 ### Core Components
 
 - **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, unstructured) based on extensions. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
-- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Currently Go is fully implemented via tree-sitter; PDF, Markdown, and spreadsheet extractors are stubbed.
+- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Currently Go and Markdown are fully implemented via tree-sitter; PDF and spreadsheet extractors are stubbed.
 - **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, and runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching).
 - **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. JSON is the only format today, but the package structure lets others be added as separate files.
 - **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`) that all pipeline stages agree on.
@@ -130,7 +184,7 @@ func main() {
 | Language   | Status        | Extractor           |
 |------------|---------------|---------------------|
 | Go         | Implemented   | tree-sitter         |
-| Markdown   | Stubbed       | TODO                |
+| Markdown   | Implemented   | tree-sitter         |
 | PDF        | Stubbed       | TODO                |
 | Spreadsheet| Stubbed       | TODO                |
 | Other      | Fallback      | Generic unstructured|
