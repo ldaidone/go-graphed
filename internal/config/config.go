@@ -24,8 +24,10 @@ const (
 	// working directory when no path is configured explicitly.
 	ModelFileName = "get-small.gtemodel"
 
-	// DefaultDimensions is the embedding vector width assumed when no
-	// value is provided (e.g. the gte small model outputs 384 floats).
+	// DefaultDimensions is the embedding vector width of the bundled gte
+	// small model (384 floats). It is only a reference value: runtime
+	// configuration defaults Dimensions to 0, meaning "auto-detect from the
+	// model", and 384 is used to document/validate the expected width.
 	DefaultDimensions = 384
 
 	// DefaultDBRoot is the config directory, relative to the user's home,
@@ -45,7 +47,8 @@ type Settings struct {
 	// ModelPath is the resolved path to a gte model file, or "" when disabled.
 	ModelPath string
 
-	// Dimensions is the embedding vector width (defaults to DefaultDimensions).
+	// Dimensions is the embedding vector width. 0 means "auto-detect from the
+	// model"; any other value is validated against the model's actual width.
 	Dimensions int
 
 	// DBRoot is the base config directory for BadgerDB stores. When empty,
@@ -66,8 +69,9 @@ type Overrides struct {
 func Load(o Overrides) (Settings, error) {
 	var s Settings
 
-	// 1. Build-time defaults.
-	s.Dimensions = DefaultDimensions
+	// 1. Build-time defaults. Dimensions defaults to 0 (auto-detect from the
+	//    model); overrides and environment variables can set it explicitly.
+	s.Dimensions = 0
 
 	// 2. Future config file (.env / similar) source. No-op for now; the
 	//    merge is written so a real reader only needs to be added here.

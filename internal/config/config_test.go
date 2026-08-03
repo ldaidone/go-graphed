@@ -99,8 +99,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if s.Dimensions != DefaultDimensions {
-		t.Errorf("Dimensions = %d, want default %d", s.Dimensions, DefaultDimensions)
+	if s.Dimensions != 0 {
+		t.Errorf("Dimensions = %d, want 0 (auto-detect)", s.Dimensions)
 	}
 	if s.ModelPath != "" {
 		t.Errorf("ModelPath = %q, want empty", s.ModelPath)
@@ -161,7 +161,7 @@ func TestLoad_InvalidEnvDimensionsFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if s.Dimensions != DefaultDimensions {
-		t.Errorf("Dimensions = %d, want default %d", s.Dimensions, DefaultDimensions)
+	if s.Dimensions != 0 {
+		t.Errorf("Dimensions = %d, want 0 (auto-detect fallback)", s.Dimensions)
 	}
 }

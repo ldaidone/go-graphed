@@ -12,11 +12,20 @@ type BuildOptions struct {
 	// Format selects the exporter (currently only "json" is supported).
 	Format string
 
-	// Exclude is reserved for future glob-based path exclusions.
+	// Exclude carries extra gitignore-style patterns layered on top of any
+	// discovered .gitignore files (e.g. "vendor/", "*.gen.go"). Patterns are
+	// matched relative to Root; use a leading "!" to re-include.
 	Exclude []string
 
-	// Jobs controls how many parser goroutines run in parallel
-	// (not yet wired -- reserved for concurrent parsing).
+	// IgnoreFiles are paths to additional gitignore-format files, layered after
+	// discovered .gitignore files and matched relative to Root.
+	IgnoreFiles []string
+
+	// NoGitIgnore disables discovery and application of .gitignore files.
+	NoGitIgnore bool
+
+	// Jobs controls how many parser goroutines run in parallel. Zero or a
+	// negative value selects runtime.NumCPU().
 	Jobs int
 
 	// ModelPath is the path to a local gte embedding model file.

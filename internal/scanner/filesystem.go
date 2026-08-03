@@ -20,6 +20,14 @@ type File struct {
 // It is the default scanner implementation; a memory-mapped or
 // git-aware scanner could satisfy the same Scanner interface.
 type FileSystemScanner struct {
+	// Exclude carries extra gitignore-style patterns layered on top of any
+	// discovered .gitignore files. They are matched relative to the scan root.
+	Exclude []string
+	// IgnoreFiles are paths to additional gitignore-format files, matched
+	// relative to the scan root and layered after discovered .gitignore files.
+	IgnoreFiles []string
+	// NoGitIgnore disables discovery and application of .gitignore files.
+	NoGitIgnore bool
 }
 
 // Scan walks the directory rooted at `root`, collecting every file
@@ -30,14 +38,28 @@ func (s *FileSystemScanner) Scan(root string) ([]File, error) {
 	var err error
 	var files []File
 	var info fs.FileInfo
+	var set *IgnoreSet
+
+	set, err = loadGitIgnore(root, s.Exclude, s.IgnoreFiles, s.NoGitIgnore)
+	if err != nil {
+		return nil, err
+	}
 
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip directories completely -- only files produce graph nodes.
+		// Skip directories that the ignore set matches, and prune the walk.
 		if d.IsDir() {
+			if set != nil && set.excluded(path, true) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// .gitignore files are configuration, not graph content.
+		if d.Name() == ".gitignore" {
 			return nil
 		}
 
@@ -48,11 +70,13 @@ func (s *FileSystemScanner) Scan(root string) ([]File, error) {
 		}
 
 		// Append the clean, customized file structure directly into our slice
-		files = append(files, File{
-			Path:     path,
-			Language: detectLanguage(path),
-			Size:     info.Size(),
-		})
+		if set == nil || !set.excluded(path, false) {
+			files = append(files, File{
+				Path:     path,
+				Language: detectLanguage(path),
+				Size:     info.Size(),
+			})
+		}
 
 		return nil
 	})

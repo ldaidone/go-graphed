@@ -8,6 +8,7 @@ require (
 	github.com/metoro-io/mcp-golang v0.16.1
 	github.com/odvcencio/gotreesitter v0.47.1
 	github.com/rcarmo/gte-go v0.0.0-20260709183039-d2ffa3a5aaf7
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/spf13/cobra v1.10.2
 )
 

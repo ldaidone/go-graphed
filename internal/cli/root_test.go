@@ -2,8 +2,6 @@ package cli
 
 import (
 	"testing"
-
-	"github.com/ldaidone/go-graphed/internal/config"
 )
 
 func TestRootCmd_HasSubcommands(t *testing.T) {
@@ -59,8 +57,8 @@ func TestBuildCmd_FlagDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dimensions flag: %v", err)
 	}
-	if dimensions != config.DefaultDimensions {
-		t.Errorf("dimensions default = %d, want %d", dimensions, config.DefaultDimensions)
+	if dimensions != 0 {
+		t.Errorf("dimensions default = %d, want 0 (auto-detect)", dimensions)
 	}
 
 	dbRoot, err := cmd.Flags().GetString("db-root")

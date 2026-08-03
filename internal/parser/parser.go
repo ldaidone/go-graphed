@@ -45,8 +45,12 @@ func Parse(file scanner.File) (ir.Document, error) {
 		doc.Metadata["processor"] = "excel-fallback-extractor"
 
 	case "markdown":
-		// TODO: Implement Markdown heading/reference extractor
-		doc.Metadata["processor"] = "markdown-fallback-extractor"
+		entities, err := extractMarkdownData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("markdown parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "markdown-extractor"
 
 	default:
 		// Generic fallback for plain text or unknown formats --
