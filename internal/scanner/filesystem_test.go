@@ -58,9 +58,79 @@ func TestDetectLanguage(t *testing.T) {
 			expected: "unstructured",
 		},
 		{
-			name:     "no extension",
+			name:     "makefile by filename",
 			path:     "Makefile",
-			expected: "unstructured",
+			expected: "make",
+		},
+		{
+			name:     "gnu makefile by filename",
+			path:     "GNUmakefile",
+			expected: "make",
+		},
+		{
+			name:     "makefile by extension",
+			path:     "build.mk",
+			expected: "make",
+		},
+		{
+			name:     "dockerfile by filename",
+			path:     "Dockerfile",
+			expected: "dockerfile",
+		},
+		{
+			name:     "containerfile by filename",
+			path:     "Containerfile",
+			expected: "dockerfile",
+		},
+		{
+			name:     "dockerfile by extension",
+			path:     "docker/app.dockerfile",
+			expected: "dockerfile",
+		},
+		{
+			name:     "json file",
+			path:     "package.json",
+			expected: "json",
+		},
+		{
+			name:     "yaml file",
+			path:     "config.yaml",
+			expected: "yaml",
+		},
+		{
+			name:     "yml file",
+			path:     "config.yml",
+			expected: "yaml",
+		},
+		{
+			name:     "toml file",
+			path:     "config.toml",
+			expected: "toml",
+		},
+		{
+			name:     "javascript file",
+			path:     "src/app.js",
+			expected: "javascript",
+		},
+		{
+			name:     "jsx file",
+			path:     "src/App.jsx",
+			expected: "javascript",
+		},
+		{
+			name:     "es module file",
+			path:     "src/util.mjs",
+			expected: "javascript",
+		},
+		{
+			name:     "typescript file",
+			path:     "src/app.ts",
+			expected: "typescript",
+		},
+		{
+			name:     "tsx file",
+			path:     "src/App.tsx",
+			expected: "tsx",
 		},
 		{
 			name:     "uppercase extension is normalised",

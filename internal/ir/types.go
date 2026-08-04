@@ -33,6 +33,11 @@ type Document struct {
 
 	// Entities are the semantic concepts/nodes discovered *inside* this file.
 	Entities []Entity
+
+	// Links are the relationships a parser discovered *inside* this file
+	// (e.g. a within-file Go call graph).  The analyzer lifts them onto the
+	// final graph alongside its own cross-document heuristics.
+	Links []Link
 }
 
 // Entity is a semantic unit extracted from a Document -- a struct,

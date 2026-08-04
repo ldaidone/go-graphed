@@ -4,234 +4,113 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ldaidone/go-graphed/internal/scanner"
 )
 
-func TestExtractGoData_Structs(t *testing.T) {
+func TestParse_GoFile_FunctionsMethodsImports(t *testing.T) {
 	tmp := t.TempDir()
 	src := `package demo
 
-type Server struct {
-	Addr string
-	Port int
+import (
+	"fmt"
+)
+
+type Dog struct{}
+
+func (d *Dog) Speak() string { return "woof" }
+
+func Greet(d *Dog) string {
+	s := d.Speak()
+	help(s)
+	return fmt.Sprintf("%s", s)
 }
 
-type Config struct {
-	Verbose bool
-}
+func help(s string) string { return s }
 `
-	path := filepath.Join(tmp, "structs.go")
+	path := filepath.Join(tmp, "demo.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	entities, err := extractGoData(path)
+	file := scanner.File{Path: path, Language: "golang", Size: int64(len(src))}
+	doc, err := Parse(file)
 	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
+		t.Fatalf("Parse returned unexpected error: %v", err)
 	}
 
-	if len(entities) != 2 {
-		t.Fatalf("expected 2 entities, got %d", len(entities))
-	}
-
-	byName := make(map[string]string)
-	for _, e := range entities {
+	byName := map[string]string{}
+	for _, e := range doc.Entities {
 		byName[e.Name] = e.Type
 	}
 
-	if byName["Server"] != "struct" {
-		t.Errorf("Server type = %q, want %q", byName["Server"], "struct")
+	// Struct and interface types (existing behavior).
+	if byName["Dog"] != "struct" {
+		t.Errorf("Dog type = %q, want struct", byName["Dog"])
 	}
-	if byName["Config"] != "struct" {
-		t.Errorf("Config type = %q, want %q", byName["Config"], "struct")
+	// Functions.
+	if byName["Greet"] != "function" {
+		t.Errorf("Greet type = %q, want function", byName["Greet"])
+	}
+	if byName["help"] != "function" {
+		t.Errorf("help type = %q, want function", byName["help"])
+	}
+	// Method named with its receiver.
+	if byName["Dog.Speak"] != "method" {
+		t.Errorf("Dog.Speak type = %q, want method", byName["Dog.Speak"])
+	}
+	// Import.
+	if byName["fmt"] != "import" {
+		t.Errorf("fmt type = %q, want import", byName["fmt"])
+	}
+
+	if len(doc.Entities) != 5 {
+		t.Errorf("expected 5 entities, got %d: %v", len(doc.Entities), byName)
+	}
+
+	// Greet calls help; selector calls (d.Speak, fmt.Sprintf) do not
+	// produce within-file links.
+	if len(doc.Links) != 1 {
+		t.Fatalf("expected 1 calls link, got %d", len(doc.Links))
+	}
+	link := doc.Links[0]
+	if link.Type != "calls" {
+		t.Errorf("link Type = %q, want calls", link.Type)
+	}
+	wantSource := path + "#function:Greet"
+	wantTarget := path + "#function:help"
+	if link.SourceID != wantSource {
+		t.Errorf("link SourceID = %q, want %q", link.SourceID, wantSource)
+	}
+	if link.TargetID != wantTarget {
+		t.Errorf("link TargetID = %q, want %q", link.TargetID, wantTarget)
 	}
 }
 
-func TestExtractGoData_Interfaces(t *testing.T) {
+func TestParse_GoFile_CallGraphSurvivesAnalyzer(t *testing.T) {
 	tmp := t.TempDir()
 	src := `package demo
 
-type Reader interface {
-	Read(p []byte) (int, error)
-}
+func alpha() { beta() }
 
-type Writer interface {
-	Write(p []byte) (int, error)
-}
+func beta() {}
 `
-	path := filepath.Join(tmp, "ifaces.go")
+	path := filepath.Join(tmp, "call.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	entities, err := extractGoData(path)
+	file := scanner.File{Path: path, Language: "golang", Size: int64(len(src))}
+	doc, err := Parse(file)
 	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
+		t.Fatalf("Parse returned unexpected error: %v", err)
 	}
 
-	if len(entities) != 2 {
-		t.Fatalf("expected 2 entities, got %d", len(entities))
+	// Forward reference: alpha calls beta, declared later in the file.
+	if len(doc.Links) != 1 {
+		t.Fatalf("expected 1 calls link, got %d", len(doc.Links))
 	}
-
-	byName := make(map[string]string)
-	for _, e := range entities {
-		byName[e.Name] = e.Type
-	}
-
-	if byName["Reader"] != "interface" {
-		t.Errorf("Reader type = %q, want %q", byName["Reader"], "interface")
-	}
-	if byName["Writer"] != "interface" {
-		t.Errorf("Writer type = %q, want %q", byName["Writer"], "interface")
-	}
-}
-
-func TestExtractGoData_MixedTypes(t *testing.T) {
-	tmp := t.TempDir()
-	src := `package demo
-
-type Store interface {
-	Get(key string) (any, error)
-}
-
-type MemStore struct {
-	data map[string]any
-}
-`
-	path := filepath.Join(tmp, "mixed.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	entities, err := extractGoData(path)
-	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
-	}
-
-	if len(entities) != 2 {
-		t.Fatalf("expected 2 entities, got %d", len(entities))
-	}
-
-	for _, e := range entities {
-		switch e.Name {
-		case "Store":
-			if e.Type != "interface" {
-				t.Errorf("Store type = %q, want %q", e.Type, "interface")
-			}
-		case "MemStore":
-			if e.Type != "struct" {
-				t.Errorf("MemStore type = %q, want %q", e.Type, "struct")
-			}
-		default:
-			t.Errorf("unexpected entity %q", e.Name)
-		}
-	}
-}
-
-func TestExtractGoData_EntityIDs(t *testing.T) {
-	tmp := t.TempDir()
-	src := `package demo
-
-type Widget struct{}
-`
-	path := filepath.Join(tmp, "ids.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	entities, err := extractGoData(path)
-	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
-	}
-
-	if len(entities) != 1 {
-		t.Fatalf("expected 1 entity, got %d", len(entities))
-	}
-
-	wantID := path + "#Widget"
-	if entities[0].ID != wantID {
-		t.Errorf("ID = %q, want %q", entities[0].ID, wantID)
-	}
-}
-
-func TestExtractGoData_LineMetadata(t *testing.T) {
-	tmp := t.TempDir()
-	// Line 3 is the type declaration.
-	src := `package demo
-
-type Foo struct{}
-`
-	path := filepath.Join(tmp, "lines.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	entities, err := extractGoData(path)
-	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
-	}
-
-	if len(entities) != 1 {
-		t.Fatalf("expected 1 entity, got %d", len(entities))
-	}
-
-	if entities[0].Metadata["start_line"] != "3" {
-		t.Errorf("start_line = %q, want %q", entities[0].Metadata["start_line"], "3")
-	}
-	if entities[0].Metadata["end_line"] != "3" {
-		t.Errorf("end_line = %q, want %q", entities[0].Metadata["end_line"], "3")
-	}
-}
-
-func TestExtractGoData_NoTypes(t *testing.T) {
-	tmp := t.TempDir()
-	src := `package demo
-
-func hello() string {
-	return "world"
-}
-`
-	path := filepath.Join(tmp, "notypes.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	entities, err := extractGoData(path)
-	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
-	}
-
-	if len(entities) != 0 {
-		t.Errorf("expected 0 entities, got %d", len(entities))
-	}
-}
-
-func TestExtractGoData_NonexistentFile(t *testing.T) {
-	_, err := extractGoData("/nonexistent/file.go")
-	if err == nil {
-		t.Error("extractGoData with nonexistent file should return an error")
-	}
-}
-
-func TestExtractGoData_FuncTypesIgnored(t *testing.T) {
-	tmp := t.TempDir()
-	src := `package demo
-
-type MyFunc func(int) error
-
-type MyChan chan string
-`
-	path := filepath.Join(tmp, "ignored.go")
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	entities, err := extractGoData(path)
-	if err != nil {
-		t.Fatalf("extractGoData returned unexpected error: %v", err)
-	}
-
-	// func types and chan types are not struct_type or interface_type, so ignored.
-	if len(entities) != 0 {
-		t.Errorf("expected 0 entities, got %d", len(entities))
+	if doc.Links[0].Type != "calls" {
+		t.Errorf("link Type = %q, want calls", doc.Links[0].Type)
 	}
 }

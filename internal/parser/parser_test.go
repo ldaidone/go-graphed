@@ -89,16 +89,6 @@ func TestParse_FallbackLanguages(t *testing.T) {
 		expectedKey string
 	}{
 		{
-			name:        "pdf sets fallback processor",
-			language:    "pdf",
-			expectedKey: "pdf-fallback-extractor",
-		},
-		{
-			name:        "spreadsheet sets fallback processor",
-			language:    "spreadsheet",
-			expectedKey: "excel-fallback-extractor",
-		},
-		{
 			name:        "unknown language sets generic processor",
 			language:    "plaintext",
 			expectedKey: "generic-unstructured-extractor",

@@ -14,7 +14,7 @@ Language-agnostic knowledge graph generator for source code.
 ## Features
 
 - **Language-agnostic pipeline**: Scanner, parser, analyzer, and exporter are fully decoupled — add a new language by writing one extractor function
-- **Tree-sitter powered**: Uses tree-sitter for Go and Markdown parsing, resilient to syntax errors and extensible to other grammars
+- **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Dockerfile, and Makefiles, resilient to syntax errors
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
 - **Document-to-code linking**: Connects Markdown/PDF documentation to the code entities they mention
 - **Flexible IR**: Intermediate representation supports documents, entities, and weighted links with metadata
@@ -173,28 +173,35 @@ func main() {
 
 ### Core Components
 
-- **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, unstructured) based on extensions. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
-- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Currently Go and Markdown are fully implemented via tree-sitter; PDF and spreadsheet extractors are stubbed.
-- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, and runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching).
+- **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, json, yaml, toml, javascript, typescript, dockerfile, make, unstructured) by extension and convention filenames. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
+- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph.
+- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), and lifts parser-produced document links (e.g., Go `calls` links) onto the graph.
 - **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. JSON is the only format today, but the package structure lets others be added as separate files.
 - **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`) that all pipeline stages agree on.
 
 ### Supported Languages
 
-| Language   | Status        | Extractor           |
-|------------|---------------|---------------------|
-| Go         | Implemented   | tree-sitter         |
-| Markdown   | Implemented   | tree-sitter         |
-| PDF        | Stubbed       | TODO                |
-| Spreadsheet| Stubbed       | TODO                |
-| Other      | Fallback      | Generic unstructured|
+| Language    | Status        | Extractor                     |
+|-------------|---------------|-------------------------------|
+| Go          | Implemented   | tree-sitter + call graph      |
+| Markdown    | Implemented   | tree-sitter                   |
+| JSON        | Implemented   | tree-sitter                   |
+| YAML        | Implemented   | tree-sitter                   |
+| TOML        | Implemented   | tree-sitter                   |
+| JavaScript  | Implemented   | tree-sitter                   |
+| TypeScript/TSX | Implemented | tree-sitter                 |
+| Dockerfile  | Implemented   | tree-sitter                   |
+| Makefile    | Implemented   | tree-sitter                   |
+| PDF         | Implemented   | pure-Go text extraction       |
+| Spreadsheet | Implemented   | stdlib CSV / excelize XLSX    |
+| Other       | Fallback      | Generic unstructured          |
 
 ## Development
 
 ### Prerequisites
 
 - Go 1.22+
-- C compiler (required by tree-sitter CGo bindings)
+- No C toolchain required: the pipeline is pure-Go and builds with `CGO_ENABLED=0`
 
 ### Building
 

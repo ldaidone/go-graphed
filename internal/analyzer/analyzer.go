@@ -87,6 +87,12 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 				}
 			}
 		}
+
+		// C. Document-internal links: parsers can attach links they
+		//    discovered inside a single file (e.g. a Go call graph).
+		//    These are lifted onto the graph as-is; the analyzer does
+		//    not re-infer or re-weight them.
+		graph.Links = append(graph.Links, doc.Links...)
 	}
 
 	return graph, nil

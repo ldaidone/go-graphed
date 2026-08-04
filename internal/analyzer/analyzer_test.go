@@ -289,3 +289,36 @@ func TestBuild_MultipleImplementsLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestBuild_LiftsDocumentLinks(t *testing.T) {
+	docs := []ir.Document{
+		{
+			Path:     "call.go",
+			Format:   "golang",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{
+				{ID: "call.go#function:alpha", Type: "function", Name: "alpha"},
+				{ID: "call.go#function:beta", Type: "function", Name: "beta"},
+			},
+			Links: []ir.Link{
+				{SourceID: "call.go#function:alpha", TargetID: "call.go#function:beta", Type: "calls", Weight: 1.0},
+			},
+		},
+	}
+
+	graph, err := Build(docs)
+	if err != nil {
+		t.Fatalf("Build returned unexpected error: %v", err)
+	}
+
+	if len(graph.Links) != 1 {
+		t.Fatalf("expected 1 lifted link, got %d", len(graph.Links))
+	}
+	link := graph.Links[0]
+	if link.Type != "calls" {
+		t.Errorf("link Type = %q, want calls", link.Type)
+	}
+	if link.SourceID != "call.go#function:alpha" || link.TargetID != "call.go#function:beta" {
+		t.Errorf("unexpected link endpoints: %s -> %s", link.SourceID, link.TargetID)
+	}
+}

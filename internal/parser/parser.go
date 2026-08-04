@@ -30,19 +30,28 @@ func Parse(file scanner.File) (ir.Document, error) {
 	// and a corresponding extract* function.
 	switch file.Language {
 	case "golang":
-		entities, err := extractGoData(file.Path)
+		entities, links, err := extractGoData(file.Path)
 		if err != nil {
 			return ir.Document{}, fmt.Errorf("golang parser failed: %w", err)
 		}
 		doc.Entities = entities
+		doc.Links = links
 
 	case "pdf":
-		// TODO: Implement PDF extractor (e.g., using a text-extraction library)
-		doc.Metadata["processor"] = "pdf-fallback-extractor"
+		entities, err := extractPDFData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("pdf parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "pdf-extractor"
 
 	case "spreadsheet":
-		// TODO: Implement Spreadsheet extractor (e.g., using excelize)
-		doc.Metadata["processor"] = "excel-fallback-extractor"
+		entities, err := extractSpreadsheetData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("spreadsheet parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "spreadsheet-extractor"
 
 	case "markdown":
 		entities, err := extractMarkdownData(file.Path)
@@ -51,6 +60,66 @@ func Parse(file scanner.File) (ir.Document, error) {
 		}
 		doc.Entities = entities
 		doc.Metadata["processor"] = "markdown-extractor"
+
+	case "json":
+		entities, err := extractJSONData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("json parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "json-extractor"
+
+	case "yaml":
+		entities, err := extractYAMLData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("yaml parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "yaml-extractor"
+
+	case "toml":
+		entities, err := extractTOMLData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("toml parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "toml-extractor"
+
+	case "javascript":
+		entities, err := extractJSData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("javascript parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "js-extractor"
+
+	case "typescript", "tsx":
+		extract := extractTSData
+		if file.Language == "tsx" {
+			extract = extractTSXData
+		}
+		entities, err := extract(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("typescript parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "ts-extractor"
+
+	case "dockerfile":
+		entities, err := extractDockerfileData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("dockerfile parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "dockerfile-extractor"
+
+	case "make":
+		entities, err := extractMakefileData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("make parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Metadata["processor"] = "make-extractor"
 
 	default:
 		// Generic fallback for plain text or unknown formats --

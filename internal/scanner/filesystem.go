@@ -88,11 +88,17 @@ func (s *FileSystemScanner) Scan(root string) ([]File, error) {
 	return files, err
 }
 
-// detectLanguage maps a file extension to an internal language key
-// that the parser uses to dispatch to the correct extractor.
+// detectLanguage maps a file name/extension to an internal language
+// key that the parser uses to dispatch to the correct extractor.
 // Returning a key (rather than a bool) lets the switch in Parse()
 // grow cleanly as new languages are added.
 func detectLanguage(path string) string {
+	// Some formats are identified by filename rather than extension:
+	// Dockerfiles and Makefiles ship without an extension by convention.
+	if lang := detectLanguageByFilename(path); lang != "" {
+		return lang
+	}
+
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	switch ext {
 	case "go":
@@ -103,7 +109,36 @@ func detectLanguage(path string) string {
 		return "markdown"
 	case "xlsx", "xls", "csv":
 		return "spreadsheet"
+	case "json":
+		return "json"
+	case "yaml", "yml":
+		return "yaml"
+	case "toml":
+		return "toml"
+	case "js", "jsx", "mjs", "cjs":
+		return "javascript"
+	case "ts", "mts", "cts":
+		return "typescript"
+	case "tsx":
+		return "tsx"
+	case "dockerfile":
+		return "dockerfile"
+	case "mk", "make":
+		return "make"
 	default:
 		return "unstructured" // fallback for plain text or unknown types
 	}
+}
+
+// detectLanguageByFilename maps convention-based filenames to a
+// language key. It returns "" when the name matches nothing, letting
+// the caller fall through to extension-based detection.
+func detectLanguageByFilename(path string) string {
+	switch strings.ToLower(filepath.Base(path)) {
+	case "dockerfile", "containerfile":
+		return "dockerfile"
+	case "makefile", "gnumakefile":
+		return "make"
+	}
+	return ""
 }

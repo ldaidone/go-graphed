@@ -1,42 +1,74 @@
 package parser
 
 import (
-	_ "context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
 	sitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// extractGoData uses tree-sitter to parse Go source and pull out
-// type declarations (structs and interfaces). Tree-sitter is
-// chosen over go/ast because it is resilient to syntax errors
-// and can be extended to other grammars without a full compiler.
-func extractGoData(path string) ([]ir.Entity, error) {
-	var err error
-	var content []byte
-	var tree *sitter.Tree
-
-	content, err = os.ReadFile(path)
+// extractGoData uses tree-sitter to parse Go source and pull out type
+// declarations (structs and interfaces), functions, methods, imports,
+// and a within-file call graph. Tree-sitter is chosen over go/ast
+// because it is resilient to syntax errors and can be extended to
+// other grammars without a full compiler.
+func extractGoData(path string) ([]ir.Entity, []ir.Link, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read file: %w", err)
+		return nil, nil, fmt.Errorf("unable to read file: %w", err)
 	}
 
 	lang := grammars.GoLanguage()
 	// Initialize pure-Go tree-sitter parser for Go
 	parser := sitter.NewParser(lang)
 
-	tree, err = parser.Parse(content)
+	tree, err := parser.Parse(content)
 	if err != nil {
-		return nil, fmt.Errorf("tree-sitter failed parsing: %w", err)
+		return nil, nil, fmt.Errorf("tree-sitter failed parsing: %w", err)
 	}
 
 	var entities []ir.Entity
+	var links []ir.Link
 
-	// Recursive AST walker helper. Using a closure lets the walker
-	// share the `entities` slice without threading it through
+	// declared maps every function/method symbol to its entity ID so
+	// call sites resolve even when they appear earlier in the file.
+	declared := make(map[string]string)
+
+	// Pass 1: register all function and method symbols.  Runs before
+	// entity extraction so forward references produce "calls" links.
+	var registerSymbols func(*sitter.Node)
+	registerSymbols = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Type(lang) {
+		case "function_declaration":
+			if name := n.ChildByFieldName("name", lang); name != nil {
+				funcName := string(content[name.StartByte():name.EndByte()])
+				declared[funcName] = fmt.Sprintf("%s#function:%s", path, funcName)
+			}
+		case "method_declaration":
+			if name := n.ChildByFieldName("name", lang); name != nil {
+				methodName := string(content[name.StartByte():name.EndByte()])
+				fullName := receiverTypeName(lang, n.ChildByFieldName("receiver", lang), content) + "." + methodName
+				declared[fullName] = fmt.Sprintf("%s#method:%s", path, fullName)
+			}
+		}
+		for i := 0; i < int(n.ChildCount()); i++ {
+			registerSymbols(n.Child(i))
+		}
+	}
+	registerSymbols(tree.RootNode())
+
+	// currentFunc tracks the entity ID of the enclosing function or
+	// method, so call_expression nodes know who the caller is.
+	var currentFunc []string
+
+	// Pass 2: extract entities and resolve calls. Using a closure lets
+	// the walker share the state slices without threading them through
 	// function arguments at every recursion level.
 	var inspectNode func(*sitter.Node)
 	inspectNode = func(n *sitter.Node) {
@@ -44,10 +76,8 @@ func extractGoData(path string) ([]ir.Entity, error) {
 			return
 		}
 
-		// We only care about type_spec nodes because that is where
-		// Go defines structs and interfaces -- the two entity kinds
-		// the analyzer can currently reason about.
-		if n.Type(lang) == "type_spec" {
+		switch n.Type(lang) {
+		case "type_spec":
 			nameNode := n.ChildByFieldName("name", lang)
 			typeNode := n.ChildByFieldName("type", lang)
 
@@ -74,14 +104,104 @@ func extractGoData(path string) ([]ir.Entity, error) {
 					})
 				}
 			}
+
+		case "function_declaration":
+			if name := n.ChildByFieldName("name", lang); name != nil {
+				funcName := string(content[name.StartByte():name.EndByte()])
+				id := fmt.Sprintf("%s#function:%s", path, funcName)
+				entities = append(entities, ir.Entity{
+					ID:   id,
+					Type: "function",
+					Name: funcName,
+					Metadata: map[string]string{
+						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+						"end_line":   fmt.Sprintf("%d", n.EndPoint().Row+1),
+					},
+				})
+				currentFunc = append(currentFunc, id)
+				for i := 0; i < int(n.ChildCount()); i++ {
+					inspectNode(n.Child(i))
+				}
+				currentFunc = currentFunc[:len(currentFunc)-1]
+			}
+			return
+
+		case "method_declaration":
+			if name := n.ChildByFieldName("name", lang); name != nil {
+				methodName := string(content[name.StartByte():name.EndByte()])
+				fullName := receiverTypeName(lang, n.ChildByFieldName("receiver", lang), content) + "." + methodName
+				id := fmt.Sprintf("%s#method:%s", path, fullName)
+				entities = append(entities, ir.Entity{
+					ID:   id,
+					Type: "method",
+					Name: fullName,
+					Metadata: map[string]string{
+						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+						"end_line":   fmt.Sprintf("%d", n.EndPoint().Row+1),
+					},
+				})
+				currentFunc = append(currentFunc, id)
+				for i := 0; i < int(n.ChildCount()); i++ {
+					inspectNode(n.Child(i))
+				}
+				currentFunc = currentFunc[:len(currentFunc)-1]
+			}
+			return
+
+		case "import_spec":
+			if p := n.ChildByFieldName("path", lang); p != nil {
+				importPath := unquoteString(string(content[p.StartByte():p.EndByte()]))
+				entities = append(entities, ir.Entity{
+					ID:   fmt.Sprintf("%s#import:%s", path, importPath),
+					Type: "import",
+					Name: importPath,
+					Metadata: map[string]string{
+						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+						"end_line":   fmt.Sprintf("%d", n.EndPoint().Row+1),
+					},
+				})
+			}
+			return
+
+		case "call_expression":
+			// Simple identifier calls to locally-declared symbols become
+			// "calls" links. Selector calls (pkg.Fn, recv.Method) are
+			// left out of the within-file graph.
+			if fn := n.ChildByFieldName("function", lang); fn != nil && len(currentFunc) > 0 && fn.Type(lang) == "identifier" {
+				callee := string(content[fn.StartByte():fn.EndByte()])
+				if target, ok := declared[callee]; ok {
+					links = append(links, ir.Link{
+						SourceID: currentFunc[len(currentFunc)-1],
+						TargetID: target,
+						Type:     "calls",
+						Weight:   1.0,
+					})
+				}
+			}
+			// Fall through so nested call expressions are visited too.
 		}
 
-		// Keep traversing down the tree branches
 		for i := 0; i < int(n.ChildCount()); i++ {
 			inspectNode(n.Child(i))
 		}
 	}
 
 	inspectNode(tree.RootNode())
-	return entities, nil
+	return entities, links, nil
+}
+
+// receiverTypeName extracts the receiver type from a method
+// declaration's receiver parameter list, e.g. "(d *Dog)" -> "Dog".
+func receiverTypeName(lang *sitter.Language, recv *sitter.Node, content []byte) string {
+	if recv == nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(content[recv.StartByte():recv.EndByte()]))
+	text = strings.TrimPrefix(text, "(")
+	text = strings.TrimSuffix(text, ")")
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(fields[len(fields)-1], "*")
 }
