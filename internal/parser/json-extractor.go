@@ -48,6 +48,12 @@ func extractJSONData(path string) ([]ir.Entity, error) {
 			val := n.ChildByFieldName("value", lang)
 			if key != nil {
 				keyName := unquoteJSONKey(string(content[key.StartByte():key.EndByte()]))
+				// A JSON object may legally use an empty-string key ("");
+				// fall back to a deterministic placeholder so the entity name
+				// and ID never come out blank.
+				if keyName == "" {
+					keyName = "(empty)"
+				}
 				fullName := keyName
 				if len(keyPath) > 0 {
 					fullName = strings.Join(append(append([]string{}, keyPath...), keyName), ".")

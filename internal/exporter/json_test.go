@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
 )
@@ -24,10 +25,11 @@ func TestJSON_WritesValidFile(t *testing.T) {
 		},
 		Links: []ir.Link{
 			{
-				SourceID: "main.go#Main",
-				TargetID: "main.go#Helper",
-				Type:     "calls",
-				Weight:   0.9,
+				SourceID:   "main.go#Main",
+				TargetID:   "main.go#Helper",
+				Type:       "calls",
+				Weight:     0.9,
+				SourceType: ir.LinkSourceExtracted,
 			},
 		},
 	}
@@ -56,6 +58,9 @@ func TestJSON_WritesValidFile(t *testing.T) {
 	}
 	if len(parsed.Links) != 1 {
 		t.Errorf("parsed Links count = %d, want 1", len(parsed.Links))
+	}
+	if parsed.Links[0].SourceType != ir.LinkSourceExtracted {
+		t.Errorf("parsed link SourceType = %q, want %q", parsed.Links[0].SourceType, ir.LinkSourceExtracted)
 	}
 }
 
@@ -133,4 +138,123 @@ func TestJSON_PrettyPrinted(t *testing.T) {
 			t.Errorf("expected JSON to start with '{', got %q", string(data[:1]))
 		}
 	}
+}
+
+func TestJSON_RoundTripsPackagesAndBuiltAt(t *testing.T) {
+	tmp := t.TempDir()
+	output := filepath.Join(tmp, "graph.json")
+	builtAt := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+
+	graph := ir.Graph{
+		Documents: map[string]*ir.Document{
+			"a.go": {Path: "a.go", Format: "golang", Metadata: map[string]string{}, Entities: []ir.Entity{}},
+		},
+		Links: []ir.Link{},
+		Packages: map[string]*ir.Package{
+			"internal/ir": {Name: "ir", Path: "internal/ir", Files: []string{"a.go"}, Imports: []string{"internal/x"}},
+		},
+		BuiltAt: builtAt,
+	}
+
+	if err := JSON(graph, output); err != nil {
+		t.Fatalf("JSON returned unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("could not read output file: %v", err)
+	}
+
+	var parsed ir.Graph
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	if len(parsed.Packages) != 1 {
+		t.Fatalf("Packages count = %d, want 1", len(parsed.Packages))
+	}
+	pkg := parsed.Packages["internal/ir"]
+	if pkg == nil {
+		t.Fatal("package internal/ir not round-tripped")
+	}
+	if pkg.Name != "ir" || len(pkg.Files) != 1 || len(pkg.Imports) != 1 || pkg.Imports[0] != "internal/x" {
+		t.Errorf("package fields not round-tripped: %+v", pkg)
+	}
+	if !parsed.BuiltAt.Equal(builtAt) {
+		t.Errorf("BuiltAt = %v, want %v", parsed.BuiltAt, builtAt)
+	}
+}
+
+func TestJSON_RoundTripsClusters(t *testing.T) {
+	tmp := t.TempDir()
+	output := filepath.Join(tmp, "graph.json")
+
+	graph := ir.Graph{
+		Documents: map[string]*ir.Document{
+			"internal/ir/types.go": {Path: "internal/ir/types.go", Format: "golang", Metadata: map[string]string{}, Entities: []ir.Entity{}},
+			"internal/ir/x.go":     {Path: "internal/ir/x.go", Format: "golang", Metadata: map[string]string{}, Entities: []ir.Entity{}},
+		},
+		Links: []ir.Link{},
+		Clusters: []ir.Cluster{
+			{ID: "directory:internal/ir", Name: "internal/ir", Kind: ir.ClusterKindDirectory, Members: []string{"internal/ir/types.go", "internal/ir/x.go"}, Size: 2},
+			{ID: "network:internal/ir/types.go", Name: "internal/ir", Kind: ir.ClusterKindNetwork, Members: []string{"internal/ir/types.go", "internal/ir/x.go"}, Size: 2},
+		},
+	}
+
+	if err := JSON(graph, output); err != nil {
+		t.Fatalf("JSON returned unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("could not read output file: %v", err)
+	}
+
+	var parsed ir.Graph
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	if len(parsed.Clusters) != 2 {
+		t.Fatalf("Clusters count = %d, want 2", len(parsed.Clusters))
+	}
+	dir := parsed.Clusters[0]
+	if dir.ID != "directory:internal/ir" || dir.Kind != ir.ClusterKindDirectory || dir.Size != 2 {
+		t.Errorf("directory cluster not round-tripped: %+v", dir)
+	}
+	if len(dir.Members) != 2 || dir.Members[0] != "internal/ir/types.go" {
+		t.Errorf("cluster members not round-tripped: %v", dir.Members)
+	}
+	net := parsed.Clusters[1]
+	if net.Kind != ir.ClusterKindNetwork {
+		t.Errorf("network cluster kind = %q, want network", net.Kind)
+	}
+}
+
+func TestJSON_ErrorPaths(t *testing.T) {
+	graph := ir.Graph{
+		Documents: make(map[string]*ir.Document),
+		Links:     []ir.Link{},
+	}
+
+	t.Run("parent directory is a file", func(t *testing.T) {
+		blocker := filepath.Join(t.TempDir(), "blocker")
+		if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		output := filepath.Join(blocker, "graph.json")
+		if err := JSON(graph, output); err == nil {
+			t.Error("expected error when the parent directory is a file")
+		}
+	})
+
+	t.Run("output path is a directory", func(t *testing.T) {
+		output := filepath.Join(t.TempDir(), "graph.json")
+		if err := os.Mkdir(output, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := JSON(graph, output); err == nil {
+			t.Error("expected error when the output path is an existing directory")
+		}
+	})
 }

@@ -312,3 +312,120 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return string(data)
 }
+
+func TestFindSection_TableDriven(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantStart int
+		wantEnd   int
+	}{
+		{
+			name:      "no markers",
+			input:     "just some content",
+			wantStart: -1,
+			wantEnd:   -1,
+		},
+		{
+			name:      "start but no end marker",
+			input:     "a" + rulesStart + "b",
+			wantStart: -1,
+			wantEnd:   -1,
+		},
+		{
+			name:      "full block",
+			input:     "head" + rulesStart + "body" + rulesEnd + "tail",
+			wantStart: 4,
+			wantEnd:   4 + len(rulesStart) + len("body") + len(rulesEnd),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := findSection(tt.input)
+			if start != tt.wantStart || end != tt.wantEnd {
+				t.Errorf("findSection() = (%d, %d), want (%d, %d)", start, end, tt.wantStart, tt.wantEnd)
+			}
+		})
+	}
+}
+
+func TestAppendRules_TableDriven(t *testing.T) {
+	section := rulesSection("graph.json")
+
+	tests := []struct {
+		name     string
+		existing string
+		wantSub  []string
+		wantCnt  int // expected count of rulesStart markers
+	}{
+		{
+			name:     "empty file gets the block",
+			existing: "",
+			wantSub:  []string{rulesStart},
+			wantCnt:  1,
+		},
+		{
+			name:     "existing file without trailing newline is terminated",
+			existing: "line one\nline two",
+			wantSub:  []string{"line one", rulesStart},
+			wantCnt:  1,
+		},
+		{
+			name:     "existing marked block is replaced in place",
+			existing: "keep me\n" + rulesStart + "old block" + rulesEnd + "\nkeep the tail",
+			wantSub:  []string{"keep me", "keep the tail", rulesStart},
+			wantCnt:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendRules(tt.existing, section)
+			if strings.Count(got, rulesStart) != tt.wantCnt {
+				t.Errorf("appendRules produced %d blocks, want %d:\n%s", strings.Count(got, rulesStart), tt.wantCnt, got)
+			}
+			for _, w := range tt.wantSub {
+				if !strings.Contains(got, w) {
+					t.Errorf("appendRules output missing %q:\n%s", w, got)
+				}
+			}
+			// A replaced block must not leave its old body behind.
+			if strings.Contains(tt.existing, "old block") && strings.Contains(got, "old block") {
+				t.Errorf("old block body was not replaced:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestTargetByName_UnknownFallsBackToAgents(t *testing.T) {
+	rt := targetByName("does-not-exist")
+	if rt.name != "does-not-exist" {
+		t.Errorf("fallback name = %q, want the requested name", rt.name)
+	}
+	if !reflect.DeepEqual(rt.paths, []string{"AGENTS.md"}) {
+		t.Errorf("fallback paths = %v, want AGENTS.md", rt.paths)
+	}
+}
+
+func TestResolveTargets_CommaSeparatedAndWhitespace(t *testing.T) {
+	got, err := resolveTargets([]string{" claude , gemini ", "cursor"}, false, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveTargets returned error: %v", err)
+	}
+	want := []string{"agents", "claude", "gemini", "cursor"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("resolveTargets() = %v, want %v", got, want)
+	}
+}
+
+func TestRunInitBuild_ReturnsErrorWhenBuildFails(t *testing.T) {
+	isolateInitEnv(t)
+	err := runInitBuild(filepath.Join(t.TempDir(), "does-not-exist"), "graph.json")
+	if err == nil {
+		t.Fatal("expected runInitBuild to fail for a nonexistent source directory")
+	}
+	if !strings.Contains(err.Error(), "build failed") {
+		t.Errorf("error = %q, want it to wrap a build failure", err)
+	}
+}

@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
@@ -32,6 +33,25 @@ func extractGoData(path string) ([]ir.Entity, []ir.Link, error) {
 
 	var entities []ir.Entity
 	var links []ir.Link
+
+	// The package_clause is a direct child of the source_file root in the
+	// Go grammar. Its name is a hard fact (parsed, not guessed), and the
+	// directory it lives in lets the analyzer group sibling files into a
+	// package node for cross-file indexing.
+	if pkgClause := findChildNodeByType(lang, tree.RootNode(), "package_clause"); pkgClause != nil {
+		if name := findChildNodeByType(lang, pkgClause, "package_identifier"); name != nil {
+			entities = append(entities, ir.Entity{
+				ID:   fmt.Sprintf("%s#package", path),
+				Type: "package",
+				Name: string(content[name.StartByte():name.EndByte()]),
+				Metadata: map[string]string{
+					"package_path": filepath.Dir(path),
+					"start_line":   fmt.Sprintf("%d", pkgClause.StartPoint().Row+1),
+					"end_line":     fmt.Sprintf("%d", pkgClause.EndPoint().Row+1),
+				},
+			})
+		}
+	}
 
 	// declared maps every function/method symbol to its entity ID so
 	// call sites resolve even when they appear earlier in the file.
@@ -171,10 +191,11 @@ func extractGoData(path string) ([]ir.Entity, []ir.Link, error) {
 				callee := string(content[fn.StartByte():fn.EndByte()])
 				if target, ok := declared[callee]; ok {
 					links = append(links, ir.Link{
-						SourceID: currentFunc[len(currentFunc)-1],
-						TargetID: target,
-						Type:     "calls",
-						Weight:   1.0,
+						SourceID:   currentFunc[len(currentFunc)-1],
+						TargetID:   target,
+						Type:       "calls",
+						Weight:     1.0,
+						SourceType: ir.LinkSourceExtracted,
 					})
 				}
 			}
@@ -204,4 +225,19 @@ func receiverTypeName(lang *sitter.Language, recv *sitter.Node, content []byte) 
 		return ""
 	}
 	return strings.TrimPrefix(fields[len(fields)-1], "*")
+}
+
+// findChildNodeByType scans a node's direct children for the first one
+// with the given tree-sitter type. It deliberately does not recurse so
+// structural declarations at the top of a file are found cheaply.
+func findChildNodeByType(lang *sitter.Language, parent *sitter.Node, wantType string) *sitter.Node {
+	if parent == nil {
+		return nil
+	}
+	for i := 0; i < int(parent.ChildCount()); i++ {
+		if child := parent.Child(i); child.Type(lang) == wantType {
+			return child
+		}
+	}
+	return nil
 }

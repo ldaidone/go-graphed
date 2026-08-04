@@ -61,6 +61,12 @@ func extractMakefileData(path string) ([]ir.Entity, error) {
 				if strings.HasPrefix(name, ".") {
 					continue
 				}
+				// Under error recovery a rule may surface with an empty
+				// target (e.g. a lone ":"); skip it rather than emitting a
+				// blank-named entity.
+				if name == "" {
+					continue
+				}
 				entity := ir.Entity{
 					ID:   fmt.Sprintf("%s#target:%s", path, name),
 					Type: "target",
@@ -93,6 +99,11 @@ func extractMakefileData(path string) ([]ir.Entity, error) {
 			}
 			if nameNode != nil {
 				name := strings.TrimSpace(string(content[nameNode.StartByte():nameNode.EndByte()]))
+				// Under error recovery a variable may surface without a name;
+				// skip it rather than emitting a blank-named entity.
+				if name == "" {
+					return
+				}
 				entity := ir.Entity{
 					ID:   fmt.Sprintf("%s#variable:%s", path, name),
 					Type: "variable",

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/go-graphed/internal/scanner"
 )
 
@@ -38,14 +39,17 @@ type Dog struct {
 	if doc.Path != path {
 		t.Errorf("Path = %q, want %q", doc.Path, path)
 	}
-	if len(doc.Entities) != 2 {
-		t.Fatalf("expected 2 entities, got %d", len(doc.Entities))
+	if len(doc.Entities) != 3 {
+		t.Fatalf("expected 3 entities (package + struct + interface), got %d", len(doc.Entities))
 	}
 
 	// Verify entity names and types (order may vary).
 	byName := make(map[string]string)
 	for _, e := range doc.Entities {
 		byName[e.Name] = e.Type
+	}
+	if byName["test"] != "package" {
+		t.Errorf("test type = %q, want %q", byName["test"], "package")
 	}
 	if byName["Animal"] != "interface" {
 		t.Errorf("Animal type = %q, want %q", byName["Animal"], "interface")
@@ -55,7 +59,7 @@ type Dog struct {
 	}
 }
 
-func TestParse_GoFile_NoEntities(t *testing.T) {
+func TestParse_GoFile_PackageOnly(t *testing.T) {
 	tmp := t.TempDir()
 	src := `package empty
 `
@@ -69,8 +73,15 @@ func TestParse_GoFile_NoEntities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse returned unexpected error: %v", err)
 	}
-	if len(doc.Entities) != 0 {
-		t.Errorf("expected 0 entities, got %d", len(doc.Entities))
+	// A file that only declares its package still yields the package entity.
+	if len(doc.Entities) != 1 {
+		t.Fatalf("expected 1 entity (the package clause), got %d", len(doc.Entities))
+	}
+	if doc.Entities[0].Type != "package" {
+		t.Errorf("entity type = %q, want %q", doc.Entities[0].Type, "package")
+	}
+	if doc.Entities[0].Name != "empty" {
+		t.Errorf("package name = %q, want %q", doc.Entities[0].Name, "empty")
 	}
 }
 
@@ -79,6 +90,72 @@ func TestParse_GoFile_BadPath(t *testing.T) {
 	_, err := Parse(file)
 	if err == nil {
 		t.Error("Parse with bad path should return an error")
+	}
+}
+
+func TestParse_AllExtractorLinksTagged(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+		ext      string
+		src      string
+	}{
+		{
+			name:     "golang",
+			language: "golang",
+			ext:      ".go",
+			src: `package p
+
+func alpha() { beta() }
+
+func beta() {}
+`,
+		},
+		{
+			name:     "javascript",
+			language: "javascript",
+			ext:      ".js",
+			src: `function helper() { return 1 }
+function main() { return helper() }
+`,
+		},
+		{
+			name:     "typescript",
+			language: "typescript",
+			ext:      ".ts",
+			src: `interface I { a: string }
+export function f() {}
+`,
+		},
+		{
+			name:     "tsx",
+			language: "tsx",
+			ext:      ".tsx",
+			src:      `export const App: React.FC = () => <div/>;`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			path := filepath.Join(tmp, "app"+tt.ext)
+			if err := os.WriteFile(path, []byte(tt.src), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			doc, err := Parse(scanner.File{Path: path, Language: tt.language, Size: int64(len(tt.src))})
+			if err != nil {
+				t.Fatalf("Parse returned unexpected error: %v", err)
+			}
+			if len(doc.Links) == 0 {
+				t.Fatalf("expected at least one link for %s, got none", tt.language)
+			}
+			for _, link := range doc.Links {
+				if link.SourceType != ir.LinkSourceExtracted {
+					t.Errorf("link %s -> %s SourceType = %q, want %q", link.SourceID, link.TargetID, link.SourceType, ir.LinkSourceExtracted)
+				}
+			}
+		})
 	}
 }
 

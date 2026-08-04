@@ -112,3 +112,50 @@ func TestBuildCmd_RequiresSourceArg(t *testing.T) {
 		t.Errorf("build with source argument should pass validation, got: %v", err)
 	}
 }
+
+func TestExecute_TableDriven(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{
+			name:    "unknown command errors",
+			args:    []string{"bogus"},
+			wantErr: true,
+		},
+		{
+			name:    "known command with missing required args errors",
+			args:    []string{"build"},
+			wantErr: true,
+		},
+		{
+			name: "help flag succeeds",
+			args: []string{"--help"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Silence cobra's default output so the test run stays quiet.
+			prev := RootCmd.SilenceUsage
+			RootCmd.SilenceUsage = true
+			defer func() { RootCmd.SilenceUsage = prev }()
+
+			prevErr := RootCmd.SilenceErrors
+			RootCmd.SilenceErrors = true
+			defer func() { RootCmd.SilenceErrors = prevErr }()
+
+			RootCmd.SetArgs(tt.args)
+			defer RootCmd.SetArgs(nil)
+
+			err := Execute()
+			if tt.wantErr && err == nil {
+				t.Errorf("Execute(%v) = nil error, want error", tt.args)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Execute(%v) = %v, want nil error", tt.args, err)
+			}
+		})
+	}
+}

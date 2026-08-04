@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/go-graphed/internal/scanner"
 )
 
@@ -44,6 +45,10 @@ func help(s string) string { return s }
 		byName[e.Name] = e.Type
 	}
 
+	// Package clause.
+	if byName["demo"] != "package" {
+		t.Errorf("demo type = %q, want package", byName["demo"])
+	}
 	// Struct and interface types (existing behavior).
 	if byName["Dog"] != "struct" {
 		t.Errorf("Dog type = %q, want struct", byName["Dog"])
@@ -64,8 +69,9 @@ func help(s string) string { return s }
 		t.Errorf("fmt type = %q, want import", byName["fmt"])
 	}
 
-	if len(doc.Entities) != 5 {
-		t.Errorf("expected 5 entities, got %d: %v", len(doc.Entities), byName)
+	// package + struct + 2 functions + method + import.
+	if len(doc.Entities) != 6 {
+		t.Errorf("expected 6 entities, got %d: %v", len(doc.Entities), byName)
 	}
 
 	// Greet calls help; selector calls (d.Speak, fmt.Sprintf) do not
@@ -84,6 +90,9 @@ func help(s string) string { return s }
 	}
 	if link.TargetID != wantTarget {
 		t.Errorf("link TargetID = %q, want %q", link.TargetID, wantTarget)
+	}
+	if link.SourceType != ir.LinkSourceExtracted {
+		t.Errorf("link SourceType = %q, want %q", link.SourceType, ir.LinkSourceExtracted)
 	}
 }
 

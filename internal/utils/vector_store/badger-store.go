@@ -171,6 +171,29 @@ func (s *BadgerStore) Close() error {
 	return s.db.Close()
 }
 
+// DeleteStale removes every stored vector whose key is not present in valid,
+// returning how many were deleted. Used during graph rebuilds so vectors for
+// removed files or entities stop surfacing in semantic search.
+func (s *BadgerStore) DeleteStale(valid map[string]struct{}) (int, error) {
+	var pruned int
+	err := s.db.Update(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			key := string(it.Item().Key())
+			if _, ok := valid[key]; ok {
+				continue
+			}
+			if err := txn.Delete([]byte(key)); err != nil {
+				return err
+			}
+			pruned++
+		}
+		return nil
+	})
+	return pruned, err
+}
+
 // vectorData holds the complete vector information including precomputed norm.
 // This structure allows efficient retrieval of vectors with their associated metadata and precomputed norms.
 type vectorData struct {

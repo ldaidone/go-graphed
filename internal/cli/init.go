@@ -346,28 +346,23 @@ func sectionBody(graphPath string) string {
 		graphPath = "graph.json"
 	}
 	return fmt.Sprintf(`This project uses **kg** (go-graphed) to maintain a local, queryable
-knowledge graph of the codebase. Before invoking a large, cloud-hosted model,
-query the graph for a *narrowed context* to conserve tokens and ground your
-analysis in the actual repository structure.
+knowledge graph of the codebase. The graph is exposed to this agent as MCP
+tools that read only from the local graph and vector store — nothing leaves the
+machine until you send context to a cloud model. Query the graph before calling
+a large, cloud-hosted model to conserve tokens and ground your analysis in the
+actual repository structure.
 
 ## Workflow
 
-1. Build the graph (a one-time step; repeat when the code changes):
+1. Keep the graph snapshot fresh (a one-time step; repeat when the code changes
+   materially):
 
        kg build . -o %[1]s
 
-2. Start the local MCP server over stdio:
+2. Use the MCP tools below to investigate the codebase instead of guessing or
+   requesting a broad context dump from a cloud model.
 
-       kg mcp --file %[1]s
-
-3. Before answering a question about the code, call the **get_narrowed_context**
-   MCP tool with:
-   - "entryPath" — the file where the investigation starts, and
-   - "searchQuery" — the semantic intent or feature description.
-   It returns only the topologically- and semantically-relevant files, which
-   you should use as the primary context before consulting a cloud model.
-
-## Available MCP tools
+## Available tools
 
 | Tool | Purpose |
 | --- | --- |
@@ -377,12 +372,27 @@ analysis in the actual repository structure.
 | list_documents_by_format | List files by format (golang, markdown, ...). |
 | find_entities_by_type | Global search for entity types (struct, interface, heading, ...). |
 
+## When to use each tool
+
+- **get_narrowed_context** — Start here for bug fixes or new features. Pass
+  "entryPath" (the file where the investigation starts) and "searchQuery" (the
+  semantic intent or feature description). Optional "maxHops" (default 1) and
+  "minScore" (default 0.65) tune how much topology and semantic noise to
+  include. Use its output as the primary context before consulting a cloud
+  model.
+- **get_document_details** — Pass "path" of a single file to get its metadata
+  and extracted AST entities.
+- **get_document_links** — Pass "path" of a single file to get its structural
+  incoming/outgoing links (dependencies, callers, callees).
+- **list_documents_by_format** — Pass "format" (golang, markdown, ...) to list
+  every indexed file of that format.
+- **find_entities_by_type** — Pass "type" (struct, interface, heading, ...) to
+  scan the global index for entities of that kind across all files.
+
 ## Notes
 
 - The graph snapshot is %[1]s; regenerate it with "kg build" whenever the
-  code changes materially.
-- All tools read from the local graph and vector store only — nothing leaves
-  the machine until you send context to a cloud model.`, graphPath)
+  code changes materially.`, graphPath)
 }
 
 func init() {

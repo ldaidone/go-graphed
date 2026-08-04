@@ -10,6 +10,12 @@ import (
 // UnderlyingEmbedder defines a shared contract for both FP32 and Q4 implementations.
 type UnderlyingEmbedder interface {
 	Embed(text string) ([]float32, error)
+	// EmbedBatchParallel embeds texts concurrently using n worker goroutines.
+	// Each worker carries its own inference buffers but shares the model
+	// weights, so the per-text cost amortises the fixed forward-pass overhead.
+	// n <= 0 means runtime.NumCPU(). Both gte implementations provide this
+	// through the pure-Go SIMD path, so no CGO is required.
+	EmbedBatchParallel(texts []string, n int) ([][]float32, error)
 	Close()
 }
 
@@ -54,6 +60,18 @@ func (e *NativeEmbedder) EmbedText(ctx context.Context, text string) ([]float32,
 		return nil, fmt.Errorf("native embedding generation failed: %w", err)
 	}
 	return vector, nil
+}
+
+// EmbedTexts embeds a batch of texts concurrently, preserving input order.
+// It routes through the underlying model's batch path so each worker reuses
+// its own buffers instead of reallocating per call (the hot path during a
+// graph build with hundreds of documents and entities).
+func (e *NativeEmbedder) EmbedTexts(ctx context.Context, texts []string, workers int) ([][]float32, error) {
+	vectors, err := e.model.EmbedBatchParallel(texts, workers)
+	if err != nil {
+		return nil, fmt.Errorf("native batch embedding generation failed: %w", err)
+	}
+	return vectors, nil
 }
 
 // Close explicitly releases model resources.

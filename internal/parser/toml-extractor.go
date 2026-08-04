@@ -41,16 +41,21 @@ func extractTOMLData(path string) ([]ir.Entity, error) {
 		case "table":
 			nameNode := tomlKeyNode(lang, n)
 			if nameNode != nil {
-				currentTable = strings.TrimSpace(string(content[nameNode.StartByte():nameNode.EndByte()]))
-				entities = append(entities, ir.Entity{
-					ID:   fmt.Sprintf("%s#table:%s", path, currentTable),
-					Type: "table",
-					Name: currentTable,
-					Metadata: map[string]string{
-						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
-						"end_line":   fmt.Sprintf("%d", n.EndPoint().Row+1),
-					},
-				})
+				// Under error recovery a table header may surface with an
+				// empty key (e.g. a lone "[]"); skip it rather than emitting
+				// a blank-named entity or clobbering the enclosing table.
+				if tableName := strings.TrimSpace(string(content[nameNode.StartByte():nameNode.EndByte()])); tableName != "" {
+					currentTable = tableName
+					entities = append(entities, ir.Entity{
+						ID:   fmt.Sprintf("%s#table:%s", path, tableName),
+						Type: "table",
+						Name: tableName,
+						Metadata: map[string]string{
+							"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+							"end_line":   fmt.Sprintf("%d", n.EndPoint().Row+1),
+						},
+					})
+				}
 			}
 			for i := 0; i < int(n.ChildCount()); i++ {
 				inspectNode(n.Child(i))
@@ -61,6 +66,12 @@ func extractTOMLData(path string) ([]ir.Entity, error) {
 			keyNode := tomlKeyNode(lang, n)
 			if keyNode != nil {
 				keyName := strings.TrimSpace(string(content[keyNode.StartByte():keyNode.EndByte()]))
+				// Under error recovery a pair may surface with an empty key
+				// (e.g. the lone "=100"); skip it rather than emitting a
+				// blank-named entity.
+				if keyName == "" {
+					return
+				}
 				fullName := keyName
 				if currentTable != "" {
 					fullName = currentTable + "." + keyName

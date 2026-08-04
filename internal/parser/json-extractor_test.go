@@ -124,3 +124,35 @@ func TestParse_JSONFile_Empty(t *testing.T) {
 		t.Errorf("expected 0 entities, got %d", len(doc.Entities))
 	}
 }
+
+func TestParse_JSONFile_EmptyStringKey(t *testing.T) {
+	// Valid JSON may use "" as an object key; the extractor must emit a
+	// well-formed entity rather than one with a blank name/ID. Surfaced by
+	// the FuzzExtractJSON property test.
+	tmp := t.TempDir()
+	src := `{"": 0}`
+	path := filepath.Join(tmp, "anonymous.json")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	file := scanner.File{Path: path, Language: "json", Size: int64(len(src))}
+	doc, err := Parse(file)
+	if err != nil {
+		t.Fatalf("Parse returned unexpected error: %v", err)
+	}
+
+	if len(doc.Entities) != 1 {
+		t.Fatalf("expected 1 entity, got %d", len(doc.Entities))
+	}
+	e := doc.Entities[0]
+	if e.Type != "property" {
+		t.Errorf("entity type = %q, want property", e.Type)
+	}
+	if e.Name == "" {
+		t.Error("entity name must not be empty for an anonymous key")
+	}
+	if e.ID == "" {
+		t.Error("entity ID must not be empty for an anonymous key")
+	}
+}

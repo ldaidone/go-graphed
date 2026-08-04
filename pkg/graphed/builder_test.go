@@ -81,8 +81,18 @@ type MemStore struct {
 	if doc.Format != "golang" {
 		t.Errorf("Format = %q, want %q", doc.Format, "golang")
 	}
-	if len(doc.Entities) != 2 {
-		t.Errorf("entities = %d, want 2", len(doc.Entities))
+	// package clause + Store interface + MemStore struct.
+	if len(doc.Entities) != 3 {
+		t.Errorf("entities = %d, want 3 (package + interface + struct)", len(doc.Entities))
+	}
+
+	// Cross-file package indexing should register the package and timestamp
+	// the snapshot so freshness can be reported later.
+	if len(graph.Packages) != 1 || graph.Packages[tmp] == nil {
+		t.Errorf("expected package index entry for %q, got %v", tmp, graph.Packages)
+	}
+	if graph.BuiltAt.IsZero() {
+		t.Error("expected BuiltAt to be set on the exported graph")
 	}
 
 	// MemStore ends with Store -> the implements naming heuristic should fire.

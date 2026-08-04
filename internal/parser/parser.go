@@ -86,11 +86,12 @@ func Parse(file scanner.File) (ir.Document, error) {
 		doc.Metadata["processor"] = "toml-extractor"
 
 	case "javascript":
-		entities, err := extractJSData(file.Path)
+		entities, links, err := extractJSData(file.Path)
 		if err != nil {
 			return ir.Document{}, fmt.Errorf("javascript parser failed: %w", err)
 		}
 		doc.Entities = entities
+		doc.Links = links
 		doc.Metadata["processor"] = "js-extractor"
 
 	case "typescript", "tsx":
@@ -98,11 +99,12 @@ func Parse(file scanner.File) (ir.Document, error) {
 		if file.Language == "tsx" {
 			extract = extractTSXData
 		}
-		entities, err := extract(file.Path)
+		entities, links, err := extract(file.Path)
 		if err != nil {
 			return ir.Document{}, fmt.Errorf("typescript parser failed: %w", err)
 		}
 		doc.Entities = entities
+		doc.Links = links
 		doc.Metadata["processor"] = "ts-extractor"
 
 	case "dockerfile":
@@ -127,6 +129,11 @@ func Parse(file scanner.File) (ir.Document, error) {
 		// in the graph even if we can't extract entities from them yet.
 		doc.Metadata["processor"] = "generic-unstructured-extractor"
 	}
+
+	// Every extractor's links pass through this chokepoint, so default
+	// any untagged edge to "extracted" here. No extractor -- current or
+	// future -- can emit a link without a provenance tag.
+	doc.Links = ir.NormalizeLinks(doc.Links)
 
 	return doc, nil
 }

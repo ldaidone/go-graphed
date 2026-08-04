@@ -365,3 +365,52 @@ func TestResolveModelPath_ConfigFileFallback(t *testing.T) {
 		t.Errorf("ResolveModelPath() = %q, want config file value", got)
 	}
 }
+
+func TestParseDimensions_TableDriven(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		fallback int
+		want     int
+	}{
+		{name: "valid positive", input: "384", fallback: 0, want: 384},
+		{name: "non-numeric", input: "abc", fallback: 0, want: 0},
+		{name: "empty", input: "", fallback: 0, want: 0},
+		{name: "zero falls back", input: "0", fallback: 384, want: 384},
+		{name: "negative falls back", input: "-12", fallback: 384, want: 384},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseDimensions(tt.input, tt.fallback); got != tt.want {
+				t.Errorf("parseDimensions(%q, %d) = %d, want %d", tt.input, tt.fallback, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUserConfigDir_EmptyHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if got := UserConfigDir(); got != "" {
+		t.Errorf("UserConfigDir() = %q, want empty when HOME is unset", got)
+	}
+}
+
+func TestBadgerDBPath_ErrorPaths(t *testing.T) {
+	t.Run("no home directory", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		if _, err := BadgerDBPath(""); err == nil {
+			t.Error("expected error when HOME is unset")
+		}
+	})
+
+	t.Run("root is a file", func(t *testing.T) {
+		blocker := filepath.Join(t.TempDir(), "blocker")
+		if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := BadgerDBPath(blocker); err == nil {
+			t.Error("expected error when DBRoot is a file")
+		}
+	})
+}

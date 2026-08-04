@@ -174,3 +174,92 @@ func TestInstallCmd_EndToEnd(t *testing.T) {
 		t.Errorf("user config not written: %v", err)
 	}
 }
+
+func TestDefaultBinDir_FinalFallback(t *testing.T) {
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "")
+	t.Setenv("HOME", "")
+	if got := defaultBinDir(); got != "." {
+		t.Errorf("defaultBinDir() = %q, want current dir fallback", got)
+	}
+}
+
+func TestInstallBinary_ErrorPaths(t *testing.T) {
+	t.Run("dest directory is a file", func(t *testing.T) {
+		blocker := filepath.Join(t.TempDir(), "bin")
+		if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := installBinary("/does/not/exist", blocker); err == nil {
+			t.Error("expected error when binDir is a file")
+		}
+	})
+
+	t.Run("source does not exist", func(t *testing.T) {
+		binDir := t.TempDir()
+		_, err := installBinary(filepath.Join(binDir, "nope"), binDir)
+		if err == nil {
+			t.Error("expected error when source does not exist")
+		}
+	})
+}
+
+func TestInstallModel_ErrorPaths(t *testing.T) {
+	t.Run("model directory is a file", func(t *testing.T) {
+		blocker := filepath.Join(t.TempDir(), "models")
+		if err := os.WriteFile(blocker, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := installModel("/does/not/exist", blocker); err == nil {
+			t.Error("expected error when modelDir is a file")
+		}
+	})
+
+	t.Run("source does not exist", func(t *testing.T) {
+		modelDir := t.TempDir()
+		_, err := installModel(filepath.Join(modelDir, "nope"), modelDir)
+		if err == nil {
+			t.Error("expected error when source does not exist")
+		}
+	})
+}
+
+func TestCopyFile_ErrorPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		src  func() string
+		dest func() string
+	}{
+		{
+			name: "missing source",
+			src:  func() string { return filepath.Join(t.TempDir(), "missing") },
+			dest: func() string { return filepath.Join(t.TempDir(), "out") },
+		},
+		{
+			name: "dest directory missing",
+			src: func() string {
+				s := filepath.Join(t.TempDir(), "src")
+				if err := os.WriteFile(s, []byte("x"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				return s
+			},
+			dest: func() string { return filepath.Join(t.TempDir(), "nested", "dir", "out") },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := copyFile(tt.src(), tt.dest(), 0755); err == nil {
+				t.Error("expected copyFile to return an error")
+			}
+		})
+	}
+}
+
+func TestEnsureUserConfig_NoHomeDir(t *testing.T) {
+	t.Setenv("HOME", "")
+	if err := ensureUserConfig("/models/get-small.gtemodel"); err == nil {
+		t.Error("expected error when the user config dir cannot be determined")
+	}
+}

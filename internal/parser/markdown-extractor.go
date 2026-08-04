@@ -132,28 +132,34 @@ func extractMarkdownData(path string) ([]ir.Entity, error) {
 
 		switch n.Type(lang) {
 		case "atx_heading":
-			headingIdx++
-			entities = append(entities, ir.Entity{
-				ID:   fmt.Sprintf("%s#heading-%d", path, headingIdx),
-				Type: "heading",
-				Name: headingTitle(content, n, lang),
-				Metadata: map[string]string{
-					"level":      atxHeadingLevel(lang, n),
-					"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
-				},
-			})
+			// A heading with no text (e.g. a bare "#") carries no semantic
+			// value; skip it rather than emitting a blank-named entity.
+			if title := strings.TrimSpace(headingTitle(content, n, lang)); title != "" {
+				headingIdx++
+				entities = append(entities, ir.Entity{
+					ID:   fmt.Sprintf("%s#heading-%d", path, headingIdx),
+					Type: "heading",
+					Name: title,
+					Metadata: map[string]string{
+						"level":      atxHeadingLevel(lang, n),
+						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+					},
+				})
+			}
 
 		case "setext_heading":
-			headingIdx++
-			entities = append(entities, ir.Entity{
-				ID:   fmt.Sprintf("%s#heading-%d", path, headingIdx),
-				Type: "heading",
-				Name: headingTitle(content, n, lang),
-				Metadata: map[string]string{
-					"level":      setextHeadingLevel(lang, n),
-					"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
-				},
-			})
+			if title := strings.TrimSpace(headingTitle(content, n, lang)); title != "" {
+				headingIdx++
+				entities = append(entities, ir.Entity{
+					ID:   fmt.Sprintf("%s#heading-%d", path, headingIdx),
+					Type: "heading",
+					Name: title,
+					Metadata: map[string]string{
+						"level":      setextHeadingLevel(lang, n),
+						"start_line": fmt.Sprintf("%d", n.StartPoint().Row+1),
+					},
+				})
+			}
 
 		case "link_reference_definition":
 			linkIdx++

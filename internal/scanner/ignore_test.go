@@ -147,3 +147,166 @@ func TestScan_MalformedGitIgnoreDoesNotAbort(t *testing.T) {
 	names := scanNames(t, &FileSystemScanner{}, tmp)
 	assertPresent(t, names, "app.go")
 }
+
+func TestScan_EmptyExcludePatterns(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		"app.go":      "package main",
+		"config.yaml": "key: value",
+	})
+
+	names := scanNames(t, &FileSystemScanner{Exclude: []string{}}, tmp)
+	assertPresent(t, names, "app.go")
+	assertPresent(t, names, "config.yaml")
+}
+
+func TestScan_EmptyIgnoreFileIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".emptyignore": "",
+		"app.go":       "package main",
+	})
+
+	names := scanNames(t, &FileSystemScanner{IgnoreFiles: []string{".emptyignore"}}, tmp)
+	assertPresent(t, names, "app.go")
+}
+
+func TestScan_NonexistentIgnoreFileIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		"app.go": "package main",
+	})
+
+	names := scanNames(t, &FileSystemScanner{IgnoreFiles: []string{".nonexistent"}}, tmp)
+	assertPresent(t, names, "app.go")
+}
+
+func TestScan_MultipleIgnoreFiles(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".ignore_a":   "*.log\n",
+		".ignore_b":   "*.tmp\n",
+		"app.go":      "package main",
+		"debug.log":   "log",
+		"scratch.tmp": "tmp",
+	})
+
+	names := scanNames(t, &FileSystemScanner{IgnoreFiles: []string{".ignore_a", ".ignore_b"}}, tmp)
+	assertPresent(t, names, "app.go")
+	assertAbsent(t, names, "debug.log")
+	assertAbsent(t, names, "scratch.tmp")
+}
+
+func TestScan_AbsoluteIgnoreFilePath(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		"my.ignore":  "*.bak\n",
+		"app.go":     "package main",
+		"backup.bak": "data",
+	})
+
+	absIgnore := filepath.Join(tmp, "my.ignore")
+	names := scanNames(t, &FileSystemScanner{IgnoreFiles: []string{absIgnore}}, tmp)
+	assertPresent(t, names, "app.go")
+	assertAbsent(t, names, "backup.bak")
+}
+
+func TestScan_DirectoryExclusionPrunesSubtree(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".gitignore":     "build/\n",
+		"app.go":         "package main",
+		"build/a.go":     "package a",
+		"build/sub/b.go": "package b",
+	})
+
+	names := scanNames(t, &FileSystemScanner{}, tmp)
+	assertPresent(t, names, "app.go")
+	assertAbsent(t, names, "build/a.go")
+	assertAbsent(t, names, "build/sub/b.go")
+}
+
+func TestScan_NegationReIncludesFile(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".gitignore":    "*.log\n!important.log\n",
+		"app.go":        "package main",
+		"debug.log":     "debug",
+		"important.log": "important",
+	})
+
+	names := scanNames(t, &FileSystemScanner{}, tmp)
+	assertPresent(t, names, "app.go")
+	assertAbsent(t, names, "debug.log")
+	assertPresent(t, names, "important.log")
+}
+
+func TestScan_DeeplyNestedGitIgnore(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".gitignore":       "*.log\n",
+		"a/.gitignore":     "*.tmp\n",
+		"a/b/.gitignore":   "*.bak\n",
+		"a/b/c/.gitignore": "*.swp\n",
+		"root.log":         "log",
+		"a/file.tmp":       "tmp",
+		"a/b/file.bak":     "bak",
+		"a/b/c/file.swp":   "swp",
+		"a/b/c/keep.go":    "package c",
+		"a/keep.go":        "package a",
+	})
+
+	names := scanNames(t, &FileSystemScanner{}, tmp)
+	assertPresent(t, names, "a/b/c/keep.go")
+	assertPresent(t, names, "a/keep.go")
+	assertAbsent(t, names, "root.log")
+	assertAbsent(t, names, "a/file.tmp")
+	assertAbsent(t, names, "a/b/file.bak")
+	assertAbsent(t, names, "a/b/c/file.swp")
+}
+
+func TestScan_UnicodeFilename(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		"café.go":     "package main",
+		"日本語.md":      "# 日本語",
+		"données.csv": "a,b,c",
+	})
+
+	names := scanNames(t, &FileSystemScanner{}, tmp)
+	assertPresent(t, names, "café.go")
+	assertPresent(t, names, "日本語.md")
+	assertPresent(t, names, "données.csv")
+}
+
+func TestScan_ExcludeOverridesGitignore(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		".gitignore":    "*.log\n!important.log\n",
+		"app.go":        "package main",
+		"important.log": "important",
+	})
+
+	// User --exclude pattern overrides the gitignore re-inclusion.
+	names := scanNames(t, &FileSystemScanner{Exclude: []string{"important.log"}}, tmp)
+	assertPresent(t, names, "app.go")
+	assertAbsent(t, names, "important.log")
+}
+
+func TestScan_SymlinkSkipped(t *testing.T) {
+	tmp := t.TempDir()
+	writeTree(t, tmp, map[string]string{
+		"real.go": "package main",
+	})
+
+	// Create a symlink to the real file.
+	symlink := filepath.Join(tmp, "link.go")
+	if err := os.Symlink(filepath.Join(tmp, "real.go"), symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	names := scanNames(t, &FileSystemScanner{}, tmp)
+	assertPresent(t, names, "real.go")
+	// Symlinks may or may not be followed depending on WalkDir behavior;
+	// this test verifies no panic occurs.
+}

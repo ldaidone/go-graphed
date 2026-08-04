@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/gob"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -230,5 +232,226 @@ func TestBackwardCompatibility(t *testing.T) {
 	}
 	if math.Abs(float64(gotNorm-5)) > 1e-6 {
 		t.Errorf("Get legacy norm = %v, want 5", gotNorm)
+	}
+}
+
+// writeRawGob stores arbitrary gob-encoded bytes under key id, bypassing the
+// store's own encoding. Used to exercise the legacy and corrupt decode paths.
+func writeRawGob(t *testing.T, s *BadgerStore, id string, v any) {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(v); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(id), buf.Bytes())
+	}); err != nil {
+		t.Fatalf("failed to write raw record %s: %v", id, err)
+	}
+}
+
+func TestGetVector_LegacyAndCorrupt(t *testing.T) {
+	s := newTestStore(t)
+
+	t.Run("legacy record migrates", func(t *testing.T) {
+		writeRawGob(t, s, "legacy-getvector", []float32{6, 8}) // norm 10
+		vec, err := s.GetVector("legacy-getvector")
+		if err != nil {
+			t.Fatalf("GetVector on legacy record returned error: %v", err)
+		}
+		if !reflect.DeepEqual(vec, []float32{6, 8}) {
+			t.Errorf("GetVector legacy = %v, want {6 8}", vec)
+		}
+	})
+
+	t.Run("corrupt record errors", func(t *testing.T) {
+		if err := s.db.Update(func(txn *badger.Txn) error {
+			return txn.Set([]byte("corrupt"), []byte("not gob data"))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.GetVector("corrupt"); err == nil {
+			t.Error("GetVector on corrupt record should return an error")
+		}
+	})
+}
+
+func TestGetAllVectors_Legacy(t *testing.T) {
+	s := newTestStore(t)
+
+	writeRawGob(t, s, "legacy-all", []float32{3, 4})
+	if err := s.SaveVector("new-all", []float32{1, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := s.GetAllVectors()
+	if err != nil {
+		t.Fatalf("GetAllVectors returned error: %v", err)
+	}
+	if !reflect.DeepEqual(all["legacy-all"], []float32{3, 4}) {
+		t.Errorf("GetAllVectors legacy = %v, want {3 4}", all["legacy-all"])
+	}
+	if !reflect.DeepEqual(all["new-all"], []float32{1, 0}) {
+		t.Errorf("GetAllVectors new = %v, want {1 0}", all["new-all"])
+	}
+}
+
+func TestGetAllVectors_Corrupt(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte("bad"), []byte("junk"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAllVectors(); err == nil {
+		t.Error("GetAllVectors on corrupt record should return an error")
+	}
+}
+
+func TestSearch_EdgeCases(t *testing.T) {
+	s := newTestStore(t)
+
+	t.Run("empty store returns no results", func(t *testing.T) {
+		results, err := s.Search([]float32{1, 0}, 5)
+		if err != nil {
+			t.Fatalf("Search on empty store returned error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("Search on empty store returned %d results, want 0", len(results))
+		}
+	})
+
+	t.Run("k zero returns all results", func(t *testing.T) {
+		for id, vec := range map[string][]float32{"a": {1, 0}, "b": {1, 0}} {
+			if err := s.Add(id, vec, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		results, err := s.Search([]float32{1, 0}, 0)
+		if err != nil {
+			t.Fatalf("Search(k=0) returned error: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("Search(k=0) returned %d results, want all 2", len(results))
+		}
+	})
+
+	t.Run("zero-norm query and vectors skipped", func(t *testing.T) {
+		// helper store: a nonzero vector + a zero vector.
+		z := newTestStore(t)
+		if err := z.Add("nonzero", []float32{1, 0}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := z.Add("zero-vec", []float32{0, 0}, nil); err != nil {
+			t.Fatal(err)
+		}
+		// Zero query: the norm guard skips every candidate.
+		res, err := z.Search([]float32{0, 0}, 10)
+		if err != nil {
+			t.Fatalf("Search(zero query) returned error: %v", err)
+		}
+		if len(res) != 0 {
+			t.Errorf("Search(zero query) returned %d results, want 0", len(res))
+		}
+		// Nonzero query must skip the zero-vector row.
+		res, err = z.Search([]float32{1, 0}, 10)
+		if err != nil {
+			t.Fatalf("Search(nonzero query) returned error: %v", err)
+		}
+		if len(res) != 1 || res[0].ID != "nonzero" {
+			t.Errorf("Search(nonzero query) = %+v, want single 'nonzero'", res)
+		}
+	})
+
+	t.Run("legacy record migrates and is searchable", func(t *testing.T) {
+		l := newTestStore(t)
+		writeRawGob(t, l, "legacy-search", []float32{1, 0})
+		res, err := l.Search([]float32{1, 0}, 10)
+		if err != nil {
+			t.Fatalf("Search over legacy record returned error: %v", err)
+		}
+		if len(res) != 1 || res[0].ID != "legacy-search" {
+			t.Errorf("Search over legacy = %+v, want single 'legacy-search'", res)
+		}
+	})
+
+	t.Run("corrupt record errors the search", func(t *testing.T) {
+		c := newTestStore(t)
+		if err := c.db.Update(func(txn *badger.Txn) error {
+			return txn.Set([]byte("corrupt"), []byte("junk"))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Search([]float32{1, 0}, 10); err == nil {
+			t.Error("Search over corrupt record should return an error")
+		}
+	})
+}
+
+func TestSavedAndImport_OnClosedStore(t *testing.T) {
+	s := newTestStore(t)
+
+	t.Run("SaveVector on closed store errors", func(t *testing.T) {
+		_ = s.Close()
+		if err := s.SaveVector("id", []float32{1, 0}); err == nil {
+			t.Error("SaveVector on closed store should error")
+		}
+	})
+
+	t.Run("Get on closed store errors", func(t *testing.T) {
+		if _, _, _, err := s.Get("id"); err == nil {
+			t.Error("Get on closed store should error")
+		}
+	})
+
+	t.Run("ImportVectors on closed store errors", func(t *testing.T) {
+		if err := s.ImportVectors(map[string][]float32{"x": {1, 0}}); err == nil {
+			t.Error("ImportVectors on closed store should error")
+		}
+	})
+}
+
+func TestNewBadgerStore_InvalidPath(t *testing.T) {
+	// A path that exists as a regular file cannot host a BadgerDB dir.
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewBadgerStore(file); err == nil {
+		t.Error("NewBadgerStore on a file path should error")
+	}
+}
+
+func TestDeleteStale(t *testing.T) {
+	s := newTestStore(t)
+	ids := []string{"a.go", "b.go#func", "c.go"}
+	for i, id := range ids {
+		if err := s.Add(id, []float32{float32(i), 0, 0}, nil); err != nil {
+			t.Fatalf("Add(%q): %v", id, err)
+		}
+	}
+
+	// Keep a.go and c.go, drop b.go#func.
+	valid := map[string]struct{}{"a.go": {}, "c.go": {}}
+	pruned, err := s.DeleteStale(valid)
+	if err != nil {
+		t.Fatalf("DeleteStale returned error: %v", err)
+	}
+	if pruned != 1 {
+		t.Errorf("pruned = %d, want 1", pruned)
+	}
+
+	all, err := s.GetAllVectors()
+	if err != nil {
+		t.Fatalf("GetAllVectors returned error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("vectors after prune = %d, want 2", len(all))
+	}
+	if _, ok := all["b.go#func"]; ok {
+		t.Error("stale vector b.go#func survived pruning")
+	}
+	if _, _, _, err := s.Get("b.go#func"); err == nil {
+		t.Error("Get on pruned id should error")
 	}
 }
