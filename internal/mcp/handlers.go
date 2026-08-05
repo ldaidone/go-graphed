@@ -38,6 +38,10 @@ type ClusterDetailArgs struct {
 	ID string `json:"id" jsonschema:"required,description=The unique cluster identifier (e.g., directory:internal/ir)"`
 }
 
+type MetricsArgs struct {
+	MaxResults int `json:"maxResults" jsonschema:"description=Maximum number of ranked documents to return. 0 means every ranked document."`
+}
+
 type NarrowContextArgs struct {
 	EntryPath   string   `json:"entryPath" jsonschema:"required,description=The file path where the bug or feature investigation starts."`
 	SearchQuery string   `json:"searchQuery" jsonschema:"required,description=The semantic intent or feature description to slice context against (e.g. error handling in DB routines)."`
@@ -156,6 +160,15 @@ func (s *Server) registerTools() error {
 		"get_cluster",
 		"Retrieves the members and metadata of a specific graph node cluster.",
 		s.handleGetCluster,
+	); err != nil {
+		return err
+	}
+
+	// 7. Global centrality ("God Node") metrics tool
+	if err := s.metoroServer.RegisterTool(
+		"get_graph_metrics",
+		"Retrieves global centrality metrics (degree, weighted degree, PageRank) and hub ('God Node') documents computed over the graph.",
+		s.handleGetGraphMetrics,
 	); err != nil {
 		return err
 	}
@@ -332,6 +345,9 @@ func (s *Server) renderNarrowedMarkdown(args NarrowContextArgs, results []contex
 		stale := s.isStale(r.Doc)
 		sb.WriteString(fmt.Sprintf("### File: `%s` (Format: %s, Semantic Score: %.2f)\n", r.Path, r.Doc.Format, r.Score))
 		sb.WriteString(fmt.Sprintf("- **AST Structures Found:** %d\n", len(r.Doc.Entities)))
+		if dm, ok := s.graph.Metrics.Documents[r.Path]; ok && dm.IsHub {
+			sb.WriteString("- **Hub (God Node):** YES — central node everything passes through\n")
+		}
 		switch {
 		case stale:
 			sb.WriteString("- **Staleness:** STALE (modified after graph snapshot)\n")
@@ -607,6 +623,22 @@ func (s *Server) handleGetDocumentDetails(args DocumentQueryArgs) (*mcp_golang.T
 		}
 	}
 
+	// Report the document's global centrality ("God Node") scores when the
+	// graph snapshot carries them. Hub documents are the architectural
+	// touchpoints (central DB drivers, middleware, routers) worth reading
+	// first when exploring a subsystem.
+	if dm, ok := s.graph.Metrics.Documents[doc.Path]; ok {
+		sb.WriteString("\n**Centrality Metrics (God Node):**\n")
+		if dm.IsHub {
+			sb.WriteString("- **Hub:** YES\n")
+		} else {
+			sb.WriteString("- **Hub:** no\n")
+		}
+		sb.WriteString(fmt.Sprintf("- **Degree:** %d\n", dm.Degree))
+		sb.WriteString(fmt.Sprintf("- **Weighted Degree:** %.2f\n", dm.WeightedDegree))
+		sb.WriteString(fmt.Sprintf("- **PageRank:** %.5f\n", dm.PageRank))
+	}
+
 	// Loop through and format the deeply nested structural entities
 	if len(doc.Entities) > 0 {
 		sb.WriteString("\n**Extracted Semantic Entities (AST):**\n")
@@ -840,4 +872,67 @@ func previewMembers(members []string, n int) string {
 		return "`" + strings.Join(members, "`, `") + "`"
 	}
 	return "`" + strings.Join(members[:n], "`, `") + "`, …"
+}
+
+// handleGetGraphMetrics reports the global centrality ("God Node") scores
+// computed over the document-level graph, ranked so hubs come first and
+// ties break on PageRank (then path). MaxResults caps the report; 0 means
+// every scored document.
+func (s *Server) handleGetGraphMetrics(args MetricsArgs) (*mcp_golang.ToolResponse, error) {
+	if s.graph == nil {
+		return nil, fmt.Errorf("graph layer state is uninitialized")
+	}
+
+	if s.graph.Metrics.Documents == nil {
+		return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(
+			"Graph carries no centrality metrics. Rebuild the graph with a recent kg build to populate hub/'God Node' scores.")), nil
+	}
+
+	type ranked struct {
+		path string
+		dm   ir.DocumentMetrics
+	}
+	docs := make([]ranked, 0, len(s.graph.Metrics.Documents))
+	for path, dm := range s.graph.Metrics.Documents {
+		docs = append(docs, ranked{path: path, dm: dm})
+	}
+	sort.Slice(docs, func(i, j int) bool {
+		if docs[i].dm.IsHub != docs[j].dm.IsHub {
+			return docs[i].dm.IsHub
+		}
+		if docs[i].dm.PageRank != docs[j].dm.PageRank {
+			return docs[i].dm.PageRank > docs[j].dm.PageRank
+		}
+		return docs[i].path < docs[j].path
+	})
+
+	if args.MaxResults > 0 && len(docs) > args.MaxResults {
+		docs = docs[:args.MaxResults]
+	}
+
+	var sb strings.Builder
+	sb.WriteString("### Graph Centrality Metrics (God Node detection)\n")
+	sb.WriteString(fmt.Sprintf("- **Documents indexed:** %d\n", len(s.graph.Documents)))
+	sb.WriteString(fmt.Sprintf("- **Hub count:** %d\n", s.graph.Metrics.HubCount))
+	if s.graph.BuiltAt.IsZero() {
+		sb.WriteString("- **Graph snapshot:** unknown (legacy graph, no build timestamp)\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("- **Graph snapshot:** %s\n", s.graph.BuiltAt.UTC().Format("2006-01-02 15:04:05 UTC")))
+	}
+
+	sb.WriteString("\nRanked by PageRank; hubs (HUB) first:\n\n")
+	if len(docs) == 0 {
+		sb.WriteString("*No documents scored.*\n")
+	} else {
+		for _, d := range docs {
+			marker := "    "
+			if d.dm.IsHub {
+				marker = "[HUB]"
+			}
+			sb.WriteString(fmt.Sprintf("* %s `%s` — degree %d, weighted %.2f, PageRank %.5f\n",
+				marker, d.path, d.dm.Degree, d.dm.WeightedDegree, d.dm.PageRank))
+		}
+	}
+
+	return mcp_golang.NewToolResponse(mcp_golang.NewTextContent(sb.String())), nil
 }

@@ -24,7 +24,7 @@ func TestResolveModelPath_EnvFallback(t *testing.T) {
 }
 
 func TestResolveModelPath_CwdFallback(t *testing.T) {
-	t.Setenv(EnvModelPath, "") // clear env so the cwd fallback is exercised
+	isolateConfigFiles(t, t.TempDir()) // clear env/home so the cwd fallback is exercised
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, ModelFileName), []byte("model"), 0644); err != nil {
 		t.Fatal(err)
@@ -39,8 +39,7 @@ func TestResolveModelPath_CwdFallback(t *testing.T) {
 }
 
 func TestResolveModelPath_EmptyWhenNothingConfigured(t *testing.T) {
-	t.Setenv(EnvModelPath, "")
-	t.Chdir(t.TempDir()) // no model file in cwd
+	isolateConfigFiles(t, t.TempDir()) // no model file in cwd
 	if got := ResolveModelPath(""); got != "" {
 		t.Errorf("ResolveModelPath() = %q, want empty (disabled)", got)
 	}
@@ -90,10 +89,7 @@ func TestBadgerDBPath_CustomRoot(t *testing.T) {
 }
 
 func TestLoad_Defaults(t *testing.T) {
-	t.Setenv(EnvModelPath, "")
-	t.Setenv(EnvDBRoot, "")
-	t.Setenv(EnvDimensions, "")
-	t.Chdir(t.TempDir())
+	isolateConfigFiles(t, t.TempDir())
 
 	s, err := Load(Overrides{})
 	if err != nil {

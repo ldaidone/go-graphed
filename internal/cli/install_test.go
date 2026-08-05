@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,6 +256,149 @@ func TestCopyFile_ErrorPaths(t *testing.T) {
 				t.Error("expected copyFile to return an error")
 			}
 		})
+	}
+}
+
+func TestDownloadModel(t *testing.T) {
+	body := "downloaded-model-content"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	prev := modelDownloadURL
+	modelDownloadURL = srv.URL
+	defer func() { modelDownloadURL = prev }()
+
+	dest, err := downloadModel(t.TempDir())
+	if err != nil {
+		t.Fatalf("downloadModel returned error: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("downloaded model not readable: %v", err)
+	}
+	if string(data) != body {
+		t.Errorf("downloaded model content = %q, want %q", data, body)
+	}
+}
+
+func TestDownloadModel_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	prev := modelDownloadURL
+	modelDownloadURL = srv.URL
+	defer func() { modelDownloadURL = prev }()
+
+	if _, err := downloadModel(t.TempDir()); err == nil {
+		t.Error("expected downloadModel to error on HTTP 500")
+	}
+}
+
+func TestDownloadModel_EmptyBodyRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	prev := modelDownloadURL
+	modelDownloadURL = srv.URL
+	defer func() { modelDownloadURL = prev }()
+
+	if _, err := downloadModel(t.TempDir()); err == nil {
+		t.Error("expected downloadModel to reject an empty body")
+	}
+}
+
+func TestInstallCmd_DownloadsModelByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	body := "downloaded-model-content"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	prevURL := modelDownloadURL
+	modelDownloadURL = srv.URL
+	defer func() { modelDownloadURL = prevURL }()
+
+	binDir := t.TempDir()
+	modelDir := filepath.Join(home, "models")
+
+	installBinDir = binDir
+	installModelSrc = ""
+	installModelDir = modelDir
+	defer func() {
+		installBinDir = ""
+		installModelSrc = ""
+		installModelDir = ""
+	}()
+
+	if err := installCmd.RunE(installCmd, nil); err != nil {
+		t.Fatalf("install returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(binDir, "kg")); err != nil {
+		t.Errorf("binary not installed: %v", err)
+	}
+	dest := filepath.Join(modelDir, config.ModelFileName)
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("downloaded model not installed: %v", err)
+	}
+	if string(data) != body {
+		t.Errorf("installed model content = %q, want %q", data, body)
+	}
+	cfg := filepath.Join(home, ".config", "graphed", "config.yaml")
+	if _, err := os.Stat(cfg); err != nil {
+		t.Errorf("user config not written: %v", err)
+	}
+}
+
+func TestInstallCmd_FallsBackToLocalCopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Unreachable download URL forces the local-copy fallback path.
+	prevURL := modelDownloadURL
+	modelDownloadURL = "http://127.0.0.1:1/nonexistent"
+	defer func() { modelDownloadURL = prevURL }()
+
+	modelSrc := filepath.Join(t.TempDir(), config.ModelFileName)
+	if err := os.WriteFile(modelSrc, []byte("local-model-content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// GRAPHEAD_MODEL_PATH points the fallback at the local model.
+	t.Setenv(config.EnvModelPath, modelSrc)
+
+	binDir := t.TempDir()
+	modelDir := filepath.Join(home, "models")
+
+	installBinDir = binDir
+	installModelSrc = ""
+	installModelDir = modelDir
+	defer func() {
+		installBinDir = ""
+		installModelSrc = ""
+		installModelDir = ""
+	}()
+
+	if err := installCmd.RunE(installCmd, nil); err != nil {
+		t.Fatalf("install returned error: %v", err)
+	}
+
+	dest := filepath.Join(modelDir, config.ModelFileName)
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("model not installed via fallback: %v", err)
+	}
+	if string(data) != "local-model-content" {
+		t.Errorf("installed model content = %q, want local fallback content", data)
 	}
 }
 

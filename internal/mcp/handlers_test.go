@@ -1307,3 +1307,167 @@ func TestPreviewMembers(t *testing.T) {
 		t.Errorf("previewMembers(nil) = %q, want none", got)
 	}
 }
+
+// metricsServer builds a Server whose graph carries a populated Metrics
+// table: hub.go is the most central document (degree 4), leaves have degree
+// 1, and one isolated doc stays at zero.
+func metricsServer() *Server {
+	hub := ir.DocumentMetrics{Degree: 4, WeightedDegree: 40, PageRank: 0.5, IsHub: true}
+	leaf := ir.DocumentMetrics{Degree: 1, WeightedDegree: 10, PageRank: 0.125}
+	iso := ir.DocumentMetrics{}
+	return &Server{graph: &ir.Graph{
+		Documents: map[string]*ir.Document{
+			"hub.go":      {Path: "hub.go", Format: "golang", Metadata: map[string]string{ir.MetadataHubFlag: "true"}},
+			"leaf.go":     {Path: "leaf.go", Format: "golang", Metadata: map[string]string{}},
+			"isolated.md": {Path: "isolated.md", Format: "markdown", Metadata: map[string]string{}},
+		},
+		Links: []ir.Link{},
+		Metrics: ir.Metrics{
+			Documents: map[string]ir.DocumentMetrics{
+				"hub.go":      hub,
+				"leaf.go":     leaf,
+				"isolated.md": iso,
+			},
+			HubCount: 1,
+		},
+	}}
+}
+
+func TestHandleGetGraphMetrics_HubsFirst(t *testing.T) {
+	s := metricsServer()
+	resp, err := s.handleGetGraphMetrics(MetricsArgs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := responseText(t, resp)
+	for _, want := range []string{
+		"- **Documents indexed:** 3",
+		"- **Hub count:** 1",
+		"[HUB] `hub.go`",
+		"degree 4",
+		"weighted 40.00",
+		"PageRank 0.50000",
+		"`leaf.go`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("response missing %q:\n%s", want, text)
+		}
+	}
+	// Hubs must sort ahead of non-hub documents.
+	hubPos := strings.Index(text, "[HUB]")
+	leafPos := strings.Index(text, "`leaf.go`")
+	if hubPos < 0 || leafPos < 0 || hubPos > leafPos {
+		t.Errorf("hub should precede leaf in report (hub=%d leaf=%d):\n%s", hubPos, leafPos, text)
+	}
+}
+
+func TestHandleGetGraphMetrics_MaxResults(t *testing.T) {
+	s := metricsServer()
+	resp, err := s.handleGetGraphMetrics(MetricsArgs{MaxResults: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := responseText(t, resp)
+	if !strings.Contains(text, "[HUB] `hub.go`") {
+		t.Errorf("expected hub in capped report:\n%s", text)
+	}
+	if strings.Contains(text, "`leaf.go`") {
+		t.Errorf("MaxResults=1 should omit leaf.go:\n%s", text)
+	}
+}
+
+func TestHandleGetGraphMetrics_NoMetrics(t *testing.T) {
+	s := &Server{graph: &ir.Graph{
+		Documents: map[string]*ir.Document{"a.go": {Path: "a.go"}},
+		Links:     []ir.Link{},
+	}}
+	resp, err := s.handleGetGraphMetrics(MetricsArgs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(responseText(t, resp), "no centrality metrics") {
+		t.Errorf("expected no-metrics message, got: %s", responseText(t, resp))
+	}
+}
+
+func TestHandleGetGraphMetrics_NilGraph(t *testing.T) {
+	s := &Server{graph: nil}
+	_, err := s.handleGetGraphMetrics(MetricsArgs{})
+	if err == nil || !strings.Contains(err.Error(), "uninitialized") {
+		t.Errorf("expected uninitialized error, got: %v", err)
+	}
+}
+
+func TestHandleGetDocumentDetails_ShowsMetrics(t *testing.T) {
+	s := metricsServer()
+	resp, err := s.handleGetDocumentDetails(DocumentQueryArgs{Path: "hub.go"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := responseText(t, resp)
+	for _, want := range []string{
+		"Centrality Metrics (God Node)",
+		"**Hub:** YES",
+		"**Degree:** 4",
+		"**Weighted Degree:** 40.00",
+		"**PageRank:** 0.50000",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("response missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestHandleGetDocumentDetails_NonHubMetrics(t *testing.T) {
+	s := metricsServer()
+	resp, err := s.handleGetDocumentDetails(DocumentQueryArgs{Path: "leaf.go"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := responseText(t, resp)
+	if !strings.Contains(text, "**Hub:** no") {
+		t.Errorf("expected non-hub marker, got:\n%s", text)
+	}
+	if !strings.Contains(text, "**Degree:** 1") {
+		t.Errorf("expected degree 1 for leaf, got:\n%s", text)
+	}
+}
+
+func TestHandleGetNarrowedContext_HubMarker(t *testing.T) {
+	const entry = "hub.go"
+
+	engine := embedx.New(embedx.NewMemoryStore())
+	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		graph: &ir.Graph{
+			Documents: map[string]*ir.Document{
+				entry: {Path: entry, Format: "golang", Metadata: map[string]string{}},
+			},
+			Links: []ir.Link{},
+			Metrics: ir.Metrics{
+				Documents: map[string]ir.DocumentMetrics{
+					entry: {Degree: 4, WeightedDegree: 40, PageRank: 0.5, IsHub: true},
+				},
+				HubCount: 1,
+			},
+		},
+		embedEngine: engine,
+		embedder:    &fakeEmbedder{},
+	}
+
+	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
+		EntryPath:   entry,
+		SearchQuery: "explain",
+		MaxHops:     1,
+		MinScore:    0.65,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(responseText(t, resp), "God Node):** YES") {
+		t.Errorf("expected hub marker in narrowed context:\n%s", responseText(t, resp))
+	}
+}

@@ -1,6 +1,7 @@
 package exporter
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -228,6 +229,59 @@ func TestJSON_RoundTripsClusters(t *testing.T) {
 	net := parsed.Clusters[1]
 	if net.Kind != ir.ClusterKindNetwork {
 		t.Errorf("network cluster kind = %q, want network", net.Kind)
+	}
+}
+
+func TestJSON_RoundTripsMetrics(t *testing.T) {
+	tmp := t.TempDir()
+	output := filepath.Join(tmp, "graph.json")
+
+	graph := ir.Graph{
+		Documents: map[string]*ir.Document{
+			"hub.go": {Path: "hub.go", Format: "golang", Metadata: map[string]string{ir.MetadataHubFlag: "true"}},
+			"a.go":   {Path: "a.go", Format: "golang", Metadata: map[string]string{}},
+		},
+		Links: []ir.Link{},
+		Metrics: ir.Metrics{
+			Documents: map[string]ir.DocumentMetrics{
+				"hub.go": {Degree: 4, WeightedDegree: 40, PageRank: 0.5, IsHub: true},
+				"a.go":   {Degree: 1, WeightedDegree: 10, PageRank: 0.125},
+			},
+			HubCount: 1,
+		},
+	}
+
+	if err := JSON(graph, output); err != nil {
+		t.Fatalf("JSON returned unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("could not read output file: %v", err)
+	}
+
+	// The literal "is_hub": "true" metadata flag must appear in graph.json.
+	if !bytes.Contains(data, []byte(`"is_hub": "true"`)) {
+		t.Error("graph.json is missing the literal \"is_hub\": \"true\" metadata flag")
+	}
+
+	var parsed ir.Graph
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	if parsed.Metrics.HubCount != 1 {
+		t.Errorf("Metrics.HubCount = %d, want 1", parsed.Metrics.HubCount)
+	}
+	hub, ok := parsed.Metrics.Documents["hub.go"]
+	if !ok {
+		t.Fatal("hub.go metrics not round-tripped")
+	}
+	if hub.Degree != 4 || hub.WeightedDegree != 40 || hub.PageRank != 0.5 || !hub.IsHub {
+		t.Errorf("hub metrics not round-tripped: %+v", hub)
+	}
+	if got := parsed.Documents["hub.go"].Metadata[ir.MetadataHubFlag]; got != "true" {
+		t.Errorf("Metadata[is_hub] = %q after round-trip, want \"true\"", got)
 	}
 }
 

@@ -66,9 +66,9 @@ func TestRegisterTools(t *testing.T) {
 }
 
 func TestClose_ReleasesResourcesAndIsIdempotent(t *testing.T) {
-	store, err := vector_store.NewBadgerStore(t.TempDir())
+	store, err := vector_store.NewSQLiteStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("NewBadgerStore returned error: %v", err)
+		t.Fatalf("NewSQLiteStore returned error: %v", err)
 	}
 	embedder := &fakeCloseEmbedder{}
 

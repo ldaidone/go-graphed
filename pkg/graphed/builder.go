@@ -28,7 +28,7 @@ func Build(opts BuildOptions) error {
 	var docs []ir.Document
 	var graph ir.Graph
 	var dbPath string
-	var store *vector_store.BadgerStore
+	var store vector_store.Store
 
 	ctx := context.Background()
 
@@ -104,7 +104,7 @@ func Build(opts BuildOptions) error {
 			return fmt.Errorf("failed to determine database path: %w", err)
 		}
 
-		store, err = vector_store.NewBadgerStore(dbPath)
+		store, err = vector_store.NewSQLiteStore(dbPath)
 		if err != nil {
 			return fmt.Errorf("failed to initialize vector store: %w", err)
 		}
@@ -287,7 +287,7 @@ func payloadHash(payload string) string {
 // pruneStaleVectors removes every stored vector whose node ID is no longer
 // part of the freshly built graph, so deleted files and entities stop
 // surfacing in semantic search results.
-func pruneStaleVectors(store *vector_store.BadgerStore, jobs []embedJob) (int, error) {
+func pruneStaleVectors(store vector_store.Store, jobs []embedJob) (int, error) {
 	valid := make(map[string]struct{}, len(jobs))
 	for _, job := range jobs {
 		valid[job.ID] = struct{}{}

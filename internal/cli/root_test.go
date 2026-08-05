@@ -5,7 +5,7 @@ import (
 )
 
 func TestRootCmd_HasSubcommands(t *testing.T) {
-	for _, name := range []string{"build", "mcp", "init", "install"} {
+	for _, name := range []string{"build", "mcp", "init", "install", "metrics", "visualize"} {
 		cmd, _, err := RootCmd.Find([]string{name})
 		if err != nil || cmd == nil {
 			t.Errorf("root command missing subcommand %q", name)

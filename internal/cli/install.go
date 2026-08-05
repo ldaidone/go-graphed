@@ -3,12 +3,20 @@ package cli
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/ldaidone/go-graphed/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// modelDownloadURL points at the bundled embedding model checked into the
+// go-graphed repository root. kg install downloads it from here by default so
+// the installed copy is always the complete, fresh model rather than whatever
+// (possibly empty or stale) get-small.gtemodel happens to sit in the current
+// directory. Kept as a variable so tests can point it at a local server.
+var modelDownloadURL = "https://github.com/ldaidone/go-graphed/raw/main/get-small.gtemodel"
 
 var (
 	installBinDir   string
@@ -44,20 +52,39 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		modelSrc := installModelSrc
-		if modelSrc == "" {
-			modelSrc = config.ResolveModelPath("")
+		modelDir := installModelDir
+		if modelDir == "" {
+			modelDir = filepath.Join(config.UserConfigDir(), "models")
 		}
 
+		// The model source resolves through three tiers:
+		//   1. An explicit --model-path copies that local file verbatim.
+		//   2. Otherwise download the bundled model straight from the
+		//      go-graphed repository, so a stale/empty local file can never
+		//      leave a broken model installed.
+		//   3. If the download fails and a local model resolves (env, config,
+		//      or ./get-small.gtemodel), fall back to copying it so offline
+		//      installs still work.
 		var modelPath string
-		if modelSrc != "" {
-			modelDir := installModelDir
-			if modelDir == "" {
-				modelDir = filepath.Join(config.UserConfigDir(), "models")
-			}
-			modelPath, err = installModel(modelSrc, modelDir)
+		switch {
+		case installModelSrc != "":
+			modelPath, err = installModel(installModelSrc, modelDir)
 			if err != nil {
 				return err
+			}
+		default:
+			modelPath, err = downloadModel(modelDir)
+			if err != nil {
+				if local := config.ResolveModelPath(""); local != "" {
+					fmt.Printf("Warning: could not download model from %s (%v); falling back to local copy %s\n", modelDownloadURL, err, local)
+					modelPath, err = installModel(local, modelDir)
+					if err != nil {
+						return err
+					}
+				} else {
+					fmt.Printf("Warning: could not download model from %s: %v\n", modelDownloadURL, err)
+					fmt.Println("Set GRAPHEAD_MODEL_PATH, place " + config.ModelFileName + " in the current directory, and run again to install it.")
+				}
 			}
 		}
 
@@ -69,7 +96,7 @@ var installCmd = &cobra.Command{
 			}
 			fmt.Printf("Wrote user config so future runs default to the installed model.\n")
 		} else {
-			fmt.Println("No embedding model found to install (set GRAPHEAD_MODEL_PATH or run from a directory containing " + config.ModelFileName + ").")
+			fmt.Println("No embedding model installed; run install again from a network-connected environment or with a local model available.")
 		}
 		return nil
 	},
@@ -110,6 +137,42 @@ func installModel(src, modelDir string) (string, error) {
 	dest := filepath.Join(modelDir, config.ModelFileName)
 	if err := copyFile(src, dest, 0644); err != nil {
 		return "", err
+	}
+	return dest, nil
+}
+
+// downloadModel fetches the bundled embedding model from the go-graphed
+// repository (modelDownloadURL) into modelDir as ModelFileName, returning the
+// destination path. A non-2xx response or an empty body is treated as a
+// failure so a truncated download can never masquerade as an installed model.
+func downloadModel(modelDir string) (string, error) {
+	if err := os.MkdirAll(modelDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create model directory %s: %w", modelDir, err)
+	}
+	dest := filepath.Join(modelDir, config.ModelFileName)
+
+	resp, err := http.Get(modelDownloadURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download model from %s: %w", modelDownloadURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download model from %s: HTTP %s", modelDownloadURL, resp.Status)
+	}
+
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to create %s: %w", dest, err)
+	}
+	written, err := io.Copy(out, resp.Body)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to write %s: %w", dest, err)
+	}
+	if written == 0 {
+		return "", fmt.Errorf("downloaded model from %s is empty", modelDownloadURL)
 	}
 	return dest, nil
 }
@@ -174,7 +237,7 @@ func init() {
 		&installModelSrc,
 		"model-path",
 		"",
-		"Path to the gte model to install (defaults to GRAPHEAD_MODEL_PATH or ./get-small.gtemodel)",
+		"Path to a local gte model to copy instead of downloading get-small.gtemodel from the repository",
 	)
 
 	installCmd.Flags().StringVar(

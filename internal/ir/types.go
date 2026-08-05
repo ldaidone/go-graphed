@@ -71,6 +71,12 @@ func ClusterID(kind, name string) string {
 	return kind + ":" + name
 }
 
+// MetadataHubFlag is the metadata key that flags a document as a global hub
+// ("God Node") in the exported graph. Consumers of graph.json can test
+// doc.Metadata["is_hub"] == "true" to prioritize core infrastructure over
+// helper utilities without parsing the structured metrics table.
+const MetadataHubFlag = "is_hub"
+
 // Graph is the final output of the pipeline. It holds every document
 // discovered during scanning together with the cross-reference links
 // the analyzer inferred between them.
@@ -90,6 +96,12 @@ type Graph struct {
 	// directory tree, Go package, or network coupling -- so downstream
 	// consumers can present subsystems instead of hundreds of raw nodes.
 	Clusters []Cluster
+	// Metrics holds the global centrality ("God Node") scores computed over
+	// the document-level coupling graph. Documents with IsHub=true are the
+	// high-impact architectural touchpoints (central DB drivers, middleware,
+	// routers) that everything passes through; LLM context selectors use the
+	// flag to prioritize core infrastructure over helper utilities.
+	Metrics Metrics
 	// BuiltAt records when the graph was assembled. Downstream consumers
 	// use it to detect stale documents (files modified after the snapshot).
 	BuiltAt time.Time
@@ -124,6 +136,43 @@ type Cluster struct {
 	// Size is the number of member documents, so consumers can rank
 	// clusters without counting Members.
 	Size int
+}
+
+// Metrics aggregates the global centrality ("God Node") scores computed over
+// the document-level coupling graph. It is a side table (like Clusters) so
+// topological traversal stays unchanged while consumers get a per-document
+// view of architectural importance.
+type Metrics struct {
+	// Documents maps each indexed document path to its centrality scores.
+	// Documents that carry no incident links keep zero-valued scores rather
+	// than being omitted, so consumers can look up any path directly.
+	Documents map[string]DocumentMetrics
+	// HubCount is the number of documents flagged as hubs. Stored so
+	// consumers can size the hub set without counting IsHub entries.
+	HubCount int
+}
+
+// DocumentMetrics is the per-document centrality record produced by the
+// "God Node" pass. The scores are computed on the same document-level
+// coupling graph used for network clustering: entity anchors collapse onto
+// their owning file and package nodes expand onto every member file.
+type DocumentMetrics struct {
+	// Degree is the number of distinct documents this document couples
+	// with, after dropping near-noise links below the traversal threshold.
+	Degree int
+	// WeightedDegree is the sum of incident link weights on the same
+	// graph, so a single heavy "part_of" edge counts for more than many
+	// weak keyword matches.
+	WeightedDegree float64
+	// PageRank is the global centrality score from the power-method pass
+	// over the weighted graph. It sums to ~1 across the document graph and
+	// is proportional to weighted degree on the undirected projection,
+	// making it a normalized measure of "everything funnels through here".
+	PageRank float64
+	// IsHub reports whether the document is one of the graph's most central
+	// nodes -- the "God Nodes" (central DB drivers, middleware handlers,
+	// main router instances) that everything passes through.
+	IsHub bool
 }
 
 // Document represents any file the scanner found, annotated with

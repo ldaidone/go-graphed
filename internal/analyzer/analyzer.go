@@ -192,6 +192,12 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 	// while consumers get a subsystem-level view.
 	annotateClusters(&graph)
 
+	// 7. Compute global centrality ("God Node") metrics over the same
+	// document-level coupling graph and flag hub documents. Like clusters,
+	// the metrics are a side table, so traversal stays unchanged while
+	// consumers get a per-document view of architectural importance.
+	annotateMetrics(&graph)
+
 	// Record when the snapshot was assembled so consumers can detect
 	// documents modified after the build.
 	graph.BuiltAt = time.Now()

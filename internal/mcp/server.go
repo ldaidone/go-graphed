@@ -39,9 +39,9 @@ type Options struct {
 type Server struct {
 	metoroServer *mcp_golang.Server
 	graph        *ir.Graph
-	embedEngine  *embedx.Embedder          // Wraps the persistent vector store
-	embedder     TextEmbedder              // Native pure-Go embedder wrapper
-	store        *vector_store.BadgerStore // Kept alive for the server's lifetime
+	embedEngine  *embedx.Embedder   // Wraps the persistent vector store
+	embedder     TextEmbedder       // Native pure-Go embedder wrapper
+	store        vector_store.Store // Kept alive for the server's lifetime
 }
 
 // NewServer builds an instance of the MCP protocol controller bound to the
@@ -56,7 +56,7 @@ func NewServer(graph *ir.Graph, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("failed to determine database path: %w", err)
 	}
 
-	store, err := vector_store.NewBadgerStore(dbPath)
+	store, err := vector_store.NewSQLiteStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize vector store: %w", err)
 	}

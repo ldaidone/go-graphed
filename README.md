@@ -9,16 +9,22 @@ Language-agnostic knowledge graph generator for source code.
 
 ## Overview
 
-`go-graphed` scans a directory of source code files, extracts semantic entities (structs, interfaces, headings, tables, etc.), and produces a JSON knowledge graph describing the codebase's structure as documents, entities, and relationships. It follows a clean **scanner → parser → analyzer → exporter** pipeline, making it easy to add new languages or output formats without touching the rest of the system.
+`go-graphed` scans a directory of source code files, extracts semantic entities (structs, interfaces, headings, tables, etc.), and produces a JSON knowledge graph describing the codebase's structure as documents, entities, and relationships. It follows a clean **scanner → parser → analyzer → exporter** pipeline, making it easy to add new languages or output formats without touching the rest of the system. The built graph powers a **local MCP server** so AI agents can query the codebase structure and get semantically narrowed context without shipping your code to a cloud model.
 
 ## Features
 
 - **Language-agnostic pipeline**: Scanner, parser, analyzer, and exporter are fully decoupled — add a new language by writing one extractor function
 - **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Dockerfile, and Makefiles, resilient to syntax errors
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
+- **Cross-file package indexing**: Aggregates Go files by package and resolves `part_of` / `imports` edges across directories
 - **Document-to-code linking**: Connects Markdown/PDF documentation to the code entities they mention
-- **Flexible IR**: Intermediate representation supports documents, entities, and weighted links with metadata
-- **Extensible exporters**: JSON output today; GraphML, RDF, or Cypher can be added as new exporter files
+- **Link provenance**: Every edge is tagged `extracted` (parsed directly from source) or `inferred` (derived by heuristics), so consumers can separate facts from guesses
+- **Global centrality ("God Node") metrics**: Computes per-document degree, weighted degree, and PageRank over the coupling graph and flags hub documents (`is_hub`) — central DB drivers, middleware, and routers surface automatically
+- **Subsystem clustering**: Groups documents by directory tree, Go package, and network coupling (greedy modularity) into higher-level domain units
+- **Semantic embeddings**: Optional pure-Go embedding of documents and entities (gte model, no CGO) with incremental rebuilds — unchanged nodes are skipped and stale vectors are pruned
+- **Flexible IR**: Intermediate representation supports documents, entities, packages, clusters, and weighted links with metadata
+- **Extensible exporters**: JSON output plus a self-contained HTML visualizer and a markdown report (`kg visualize`); GraphML, RDF, or Cypher can be added as new exporter files
+- **Agent-ready MCP server**: `kg mcp` exposes the graph over stdio with tools for document details, links, entity search, cluster inspection, centrality metrics, and hybrid topological + semantic context narrowing
 - **Go-style path support**: Accepts `./...` wildcard syntax familiar to Go developers
 - **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns
 - **Agent-ready setup**: `kg init` emits per-project agent rules and `kg install` puts the binary + model on PATH globally
@@ -34,7 +40,7 @@ Or build from source:
 ```bash
 git clone https://github.com/ldaidone/go-graphed.git
 cd go-graphed
-go build -o kg ./cmd/kg
+make build           # or: go build -o kg ./cmd/kg
 ```
 
 ## Quick Start
@@ -56,6 +62,24 @@ go build -o kg ./cmd/kg
 
 # Parallelize parsing across 8 workers
 ./kg build . --jobs 8
+
+# Generate a self-contained interactive visualizer (graph.html) and a
+# markdown report (GRAPH_REPORT.md) summarizing hubs, coupling, and clusters
+./kg visualize
+
+# Customize the artifact paths
+./kg visualize --html out/graph.html --report out/GRAPH_REPORT.md
+
+# Print global centrality ("God Node") metrics: hubs first, ranked by PageRank
+./kg metrics
+./kg metrics --file out/graph.json
+
+# Summarize subsystem clusters (directory, module, or network coupling)
+./kg clusters
+./kg clusters --kind network
+
+# Serve the graph as an MCP server over stdio (JSON-RPC tools for agents)
+./kg mcp --file graph.json
 ```
 
 ### Agent Rules and Global Install
@@ -79,10 +103,43 @@ go build -o kg ./cmd/kg
 
 # If the graph snapshot is missing, kg init prints a reminder to run kg build.
 
-# Install the binary and the bundled embedding model for global use
-# (binary into GOBIN/GOPATH/bin, model into ~/.config/graphed/models)
+# Install the binary and the bundled embedding model for global use.
+# The model is downloaded from the go-graphed repository by default so the
+# installed copy is always complete; --model-path copies a local file instead.
+# Binary goes into GOBIN/GOPATH/bin, model into ~/.config/graphed/models
 ./kg install
+./kg install --model-path ./get-small.gtemodel
 ```
+
+### MCP Server
+
+`kg mcp` starts a Model Context Protocol (MCP) server over standard I/O that
+exposes the built graph to AI agents. It reads only the local `graph.json` and
+the local vector store — nothing leaves the machine. Wire it into your agent
+via its MCP configuration (stdio transport, command `kg mcp`).
+
+```bash
+./kg mcp                 # defaults: --file graph.json, model/db from config
+./kg mcp --file graph.json --model-path ./get-small.gtemodel
+```
+
+Configure the embedding model path and vector-store directory with
+`--model-path` / `--db-root` flags or the `GRAPHEAD_MODEL_PATH` /
+`GRAPHEAD_DB_ROOT` environment variables. The server exposes these tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `get_narrowed_context` | Hybrid topological + semantic search returning a focused, token-bounded context slice |
+| `get_document_details` | Metadata, extracted AST entities, centrality scores, and clusters for one file |
+| `get_document_links` | Structural incoming/outgoing links for a file |
+| `list_documents_by_format` | List files by format (golang, markdown, ...) |
+| `find_entities_by_type` | Global search for entity types (struct, interface, heading, ...) |
+| `list_clusters` | List graph node clusters by directory tree, Go module, or network coupling |
+| `get_cluster` | Members and metadata of one cluster |
+| `get_graph_metrics` | Global centrality metrics and hub ("God Node") documents |
+
+`kg init` generates per-project agent rules documenting this workflow and the
+tools above, so agents query the local graph before calling cloud models.
 
 ### Configuration
 
@@ -132,6 +189,7 @@ func main() {
 
 ```json
 {
+    "BuiltAt": "2026-08-05T12:00:00Z",
     "Documents": {
         "internal/parser/parser.go": {
             "Path": "internal/parser/parser.go",
@@ -140,9 +198,11 @@ func main() {
                 {
                     "ID": "internal/parser/parser.go#Parse",
                     "Type": "struct",
-                    "Name": "Parse"
+                    "Name": "Parse",
+                    "Metadata": { "start_line": "42", "end_line": "58" }
                 }
-            ]
+            ],
+            "Metadata": { "is_hub": "true" }
         }
     },
     "Links": [
@@ -150,9 +210,22 @@ func main() {
             "SourceID": "internal/parser/parser.go#GraphBuilder",
             "TargetID": "internal/scanner/scanner.go#Scanner",
             "Type": "implements",
-            "Weight": 0.8
+            "Weight": 0.8,
+            "SourceType": "inferred"
         }
-    ]
+    ],
+    "Packages": {
+        "internal/parser": { "Name": "parser", "Files": ["internal/parser/parser.go"] }
+    },
+    "Clusters": [
+        { "ID": "directory:internal/parser", "Name": "internal/parser", "Kind": "directory", "Members": ["internal/parser/parser.go"], "Size": 1 }
+    ],
+    "Metrics": {
+        "HubCount": 1,
+        "Documents": {
+            "internal/parser/parser.go": { "Degree": 4, "WeightedDegree": 3.2, "PageRank": 0.31, "IsHub": true }
+        }
+    }
 }
 ```
 
@@ -175,9 +248,11 @@ func main() {
 
 - **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, json, yaml, toml, javascript, typescript, dockerfile, make, unstructured) by extension and convention filenames. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
 - **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph.
-- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), and lifts parser-produced document links (e.g., Go `calls` links) onto the graph.
-- **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. JSON is the only format today, but the package structure lets others be added as separate files.
-- **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`) that all pipeline stages agree on.
+- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), lifts parser-produced document links (e.g., Go `calls` links), aggregates Go packages and resolves `imports`, groups documents into clusters (directory / module / network coupling via greedy modularity), and computes global centrality ("God Node") metrics (degree, weighted degree, PageRank) that flag hub documents.
+- **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. `JSON` writes graph.json; `HTML` renders a self-contained, dependency-free interactive visualizer (force layout, pan/zoom, filtering, per-node detail panel); `Report` writes a markdown summary mirroring the `kg metrics` and `kg clusters` terminal views. Other formats can be added as separate files.
+- **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`, `Package`, `Cluster`, `Metrics`) that all pipeline stages agree on. Links carry a provenance tag (`extracted` vs `inferred`); documents can be flagged as hubs (`is_hub`).
+- **MCP** (`internal/mcp/`): The MCP server used by `kg mcp`, exposing the graph as JSON-RPC tools over stdio, including the hybrid topological + semantic `get_narrowed_context` tool backed by the vector store.
+- **Vector store** (`internal/utils/vector_store/`): SQLite-backed store (WAL mode, safe for multiple concurrent MCP servers) for the document/entity embeddings produced at build time when a model is configured. Rebuilds are incremental: unchanged payloads are skipped via stored hashes and stale vectors are pruned.
 
 ### Supported Languages
 
@@ -200,34 +275,38 @@ func main() {
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - No C toolchain required: the pipeline is pure-Go and builds with `CGO_ENABLED=0`
 
 ### Building
 
 ```bash
-go build -o kg ./cmd/kg
+make build           # or: go build -o kg ./cmd/kg
 ```
 
 ### Running Tests
 
 ```bash
 # Run all tests
-go test ./...
+make test            # or: go test ./...
 
 # Run with race detection
-go test -race ./...
+make test-race       # or: go test -race ./...
 
 # Run with coverage
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
+make coverage        # or: go test -coverprofile=coverage.out ./...
+                     #    go tool cover -html=coverage.out
 ```
 
 ### Static Analysis
 
 ```bash
-go vet ./...
+make vet             # or: go vet ./...
 ```
+
+Other Makefile targets: `make run` / `make run-build` (run kg / kg build with
+`ARGS=...`), `make run-mcp` (run `kg mcp` with `ARGS=...`), `make tidy`, and
+`make clean`. Run `make help` for the full list.
 
 ## Contributing
 
@@ -235,7 +314,7 @@ go vet ./...
 2. Create a feature branch
 3. Make your changes
 4. Add tests for new functionality
-5. Run `go vet ./...` and `go test -race ./...`
+5. Run `make vet` and `make test-race` (or `go vet ./...` and `go test -race ./...`)
 6. Submit a pull request
 
 ### Adding a New Language
