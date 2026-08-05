@@ -53,6 +53,14 @@ type NarrowContextArgs struct {
 	Format      string   `json:"format" jsonschema:"description=Response format: \"markdown\" (default) or \"json\"."`
 }
 
+// minSemanticSearchResults is the floor for the vector-search candidate
+// pool in handleGetNarrowedContext. It is applied because the candidate
+// count used to be derived purely from the topological frontier, and a
+// graph with few or no cross-file edges (e.g. a JavaScript project before
+// import resolution) collapsed the search to ~0 candidates -- producing
+// phantom "Semantic Score: 0.00" rows for every surviving file.
+const minSemanticSearchResults = 20
+
 // contextResult is a document that survived both the topological traversal
 // and the semantic score boundary.
 type contextResult struct {
@@ -204,13 +212,37 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 		return nil, fmt.Errorf("failed to vectorise search boundary intent: %w", err)
 	}
 
+	// Resolve the entry point. A single indexed file seeds one entry; a
+	// directory expands to every indexed document beneath it, so callers can
+	// ask for an entire subsystem without guessing a filename first. Anything
+	// else is rejected with a clear error instead of silently returning empty.
+	entrySet := make(map[string]bool)
+	if _, exists := s.graph.Documents[args.EntryPath]; exists {
+		entrySet[args.EntryPath] = true
+	} else {
+		prefix := args.EntryPath
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		for p := range s.graph.Documents {
+			if strings.HasPrefix(p, prefix) {
+				entrySet[p] = true
+			}
+		}
+		if len(entrySet) == 0 {
+			return nil, fmt.Errorf("entry path %q is neither an indexed file nor a directory containing one", args.EntryPath)
+		}
+	}
+
 	// Track structural topological neighbors. Package nodes expand to every
 	// member file, so a single "imports" edge pulls in a whole dependency
 	// package in one hop (cross-file package indexing).
-	topologicalPaths := make(map[string]bool)
-	topologicalPaths[args.EntryPath] = true
-
-	currentLevel := []string{args.EntryPath}
+	topologicalPaths := make(map[string]bool, len(entrySet))
+	currentLevel := make([]string, 0, len(entrySet))
+	for entry := range entrySet {
+		topologicalPaths[entry] = true
+		currentLevel = append(currentLevel, entry)
+	}
 
 	// Traverse link graph topology paths
 	for hop := 0; hop < args.MaxHops; hop++ {
@@ -254,8 +286,14 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 	}
 
 	// Step 2: Use goembedx.Embedder to perform semantic similarity query matching
-	// We request up to len(topologicalPaths)*2 results to cover docs and internal entities
-	matches, err = s.embedEngine.Search(queryVector, len(topologicalPaths)*2)
+	// We request up to len(topologicalPaths)*2 results to cover docs and internal
+	// entities, floored at minSemanticSearchResults so a sparse topology frontier
+	// (few cross-file edges) never starves the semantic pass to ~0 candidates.
+	candidates := len(topologicalPaths) * 2
+	if candidates < minSemanticSearchResults {
+		candidates = minSemanticSearchResults
+	}
+	matches, err = s.embedEngine.Search(queryVector, candidates)
 	if err != nil {
 		return nil, fmt.Errorf("vector database query retrieval failed: %w", err)
 	}
@@ -275,15 +313,16 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 	}
 
 	// Step 3: Intersect structural graph neighbors with semantic scores to build
-	// a high-relevance manifest. The entry file always survives so a caller can
-	// never empty out the very file they asked to investigate.
+	// a high-relevance manifest. Entry files (or every file under a directory
+	// entry) always survive so a caller can never empty out the very code they
+	// asked to investigate.
 	results := make([]contextResult, 0, len(topologicalPaths))
 	for path := range topologicalPaths {
 		if excludedPath(path, args.Exclude) {
 			continue
 		}
 		score, meetsSemanticBounds := semanticMatches[path]
-		if !meetsSemanticBounds && path != args.EntryPath {
+		if !meetsSemanticBounds && !entrySet[path] {
 			continue
 		}
 
@@ -294,13 +333,12 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 		results = append(results, contextResult{Path: path, Doc: doc, Score: score})
 	}
 
-	// Entry file first, then the rest ranked by semantic score.
+	// Entry files first (ranked by semantic score among themselves), then the
+	// rest of the frontier ranked by semantic score.
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].Path == args.EntryPath {
-			return true
-		}
-		if results[j].Path == args.EntryPath {
-			return false
+		ei, ej := entrySet[results[i].Path], entrySet[results[j].Path]
+		if ei != ej {
+			return ei
 		}
 		return results[i].Score > results[j].Score
 	})

@@ -336,6 +336,74 @@ func TestHandleGetNarrowedContext_DefaultsApplied(t *testing.T) {
 	}
 }
 
+func TestHandleGetNarrowedContext_DirectoryEntryExpandsToMembers(t *testing.T) {
+	// A directory entry must expand to every indexed file beneath it, and
+	// those member files survive the semantic filter even when they score
+	// below the min bound (mirroring the single-file entry guarantee).
+	engine := embedx.New(embedx.NewMemoryStore())
+	if err := engine.Add("src/index.js", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("failed to seed entry vector: %v", err)
+	}
+	if err := engine.Add("src/utils/format.js", []float32{0, 1, 0}); err != nil {
+		t.Fatalf("failed to seed neighbor vector: %v", err)
+	}
+	if err := engine.Add("docs/readme.md", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("failed to seed orphan vector: %v", err)
+	}
+
+	s := &Server{
+		graph: &ir.Graph{
+			Documents: map[string]*ir.Document{
+				"src/index.js":        {Path: "src/index.js", Format: "javascript", Size: 10, Metadata: map[string]string{}, Entities: []ir.Entity{}},
+				"src/utils/format.js": {Path: "src/utils/format.js", Format: "javascript", Size: 10, Metadata: map[string]string{}, Entities: []ir.Entity{}},
+				"docs/readme.md":      {Path: "docs/readme.md", Format: "markdown", Size: 10, Metadata: map[string]string{}, Entities: []ir.Entity{}},
+			},
+			Links: []ir.Link{},
+		},
+		embedEngine: engine,
+		embedder:    &fakeEmbedder{},
+	}
+
+	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
+		EntryPath:   "src",
+		SearchQuery: "explain the app shell",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := responseText(t, resp)
+	for _, want := range []string{"src/index.js", "src/utils/format.js"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("directory entry should surface member %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "docs/readme.md") {
+		t.Errorf("directory entry should not include files outside the directory:\n%s", text)
+	}
+}
+
+func TestHandleGetNarrowedContext_UnknownEntryReturnsError(t *testing.T) {
+	s := &Server{
+		graph: &ir.Graph{
+			Documents: map[string]*ir.Document{
+				"src/index.js": {Path: "src/index.js", Format: "javascript", Size: 10, Metadata: map[string]string{}, Entities: []ir.Entity{}},
+			},
+			Links: []ir.Link{},
+		},
+		embedEngine: embedx.New(embedx.NewMemoryStore()),
+		embedder:    &fakeEmbedder{},
+	}
+
+	_, err := s.handleGetNarrowedContext(NarrowContextArgs{
+		EntryPath:   "does/not/exist",
+		SearchQuery: "explain",
+	})
+	if err == nil {
+		t.Fatal("expected an error for an entry path that matches no indexed file or directory")
+	}
+}
+
 // failingVectorStore is a VectorStore whose retrieval always fails, used to
 // exercise the search-failure branch of handleGetNarrowedContext.
 type failingVectorStore struct{}
@@ -615,27 +683,36 @@ func TestHandleGetNarrowedContext_FileReadFailure(t *testing.T) {
 }
 
 func TestHandleGetNarrowedContext_NoResults(t *testing.T) {
-	const entry = "ghost.go" // reachable topologically but absent from the graph
+	const entry = "ghost.go" // a real indexed document, excluded below
 
 	engine := embedx.New(embedx.NewMemoryStore())
+	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
 	if err := engine.Add("some/other.go", []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
 		graph: &ir.Graph{
-			Documents: map[string]*ir.Document{"some/other.go": {Path: "some/other.go"}},
-			Links:     []ir.Link{},
+			Documents: map[string]*ir.Document{
+				entry:           {Path: entry, Format: "golang"},
+				"some/other.go": {Path: "some/other.go", Format: "golang"},
+			},
+			Links: []ir.Link{},
 		},
 		embedEngine: engine,
 		embedder:    &fakeEmbedder{},
 	}
 
+	// Excluding the entry itself (the only file in its frontier) must still
+	// surface the explicit no-results message rather than an empty payload.
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
 		EntryPath:   entry,
 		SearchQuery: "explain",
 		MaxHops:     1,
 		MinScore:    0.65,
+		Exclude:     []string{entry},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

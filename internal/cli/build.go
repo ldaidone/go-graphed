@@ -9,15 +9,17 @@ import (
 )
 
 var (
-	output      string
-	format      string
-	modelPath   string
-	dimensions  int
-	jobs        int
-	dbRoot      string
-	exclude     []string
-	ignoreFiles []string
-	noGitIgnore bool
+	output        string
+	format        string
+	modelPath     string
+	dimensions    int
+	jobs          int
+	dbRoot        string
+	exclude       []string
+	ignoreFiles   []string
+	noGitIgnore   bool
+	noDefaultSkip bool
+	skipEmbed     []string
 )
 
 // buildCmd is registered under RootCmd in init() below.
@@ -40,16 +42,18 @@ var buildCmd = &cobra.Command{
 
 		var opts graphed.BuildOptions
 		opts = graphed.BuildOptions{
-			Root:        cleanSourcePath(args[0]),
-			Output:      output,
-			Format:      format,
-			ModelPath:   cfg.ModelPath,
-			Dimensions:  cfg.Dimensions,
-			DBRoot:      cfg.DBRoot,
-			Jobs:        jobs,
-			Exclude:     exclude,
-			IgnoreFiles: ignoreFiles,
-			NoGitIgnore: noGitIgnore,
+			Root:           cleanSourcePath(args[0]),
+			Output:         output,
+			Format:         format,
+			ModelPath:      cfg.ModelPath,
+			Dimensions:     cfg.Dimensions,
+			DBRoot:         cfg.DBRoot,
+			Jobs:           jobs,
+			Exclude:        exclude,
+			IgnoreFiles:    ignoreFiles,
+			NoGitIgnore:    noGitIgnore,
+			NoDefaultSkip:  noDefaultSkip,
+			SkipEmbedTypes: skipEmbed,
 		}
 		return graphed.Build(opts)
 	},
@@ -125,6 +129,13 @@ func init() {
 		"Parser worker count (0 = runtime.NumCPU())",
 	)
 
+	buildCmd.Flags().StringSliceVar(
+		&skipEmbed,
+		"embed-skip-types",
+		graphed.DefaultSkipEmbedTypes,
+		"Entity types to skip when generating embeddings (import/package are always skipped; pass \"\" to embed every entity type)",
+	)
+
 	buildCmd.Flags().StringArrayVar(
 		&exclude,
 		"exclude",
@@ -144,6 +155,13 @@ func init() {
 		"no-git-ignore",
 		false,
 		"Disable discovery and application of .gitignore files",
+	)
+
+	buildCmd.Flags().BoolVar(
+		&noDefaultSkip,
+		"no-default-skip",
+		false,
+		"Disable the built-in noise filter (VCS internals, binary assets, lockfiles)",
 	)
 
 	RootCmd.AddCommand(buildCmd)

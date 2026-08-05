@@ -189,6 +189,13 @@ func networkAdjacency(graph *ir.Graph) networkGraph {
 		if link.Weight < clusterNetworkMinWeight {
 			continue
 		}
+		// Markdown/PDF "documents" edges are path-keyword heuristics: they
+		// associate docs with code but do not reflect structural coupling.
+		// Excluding them keeps PageRank hubs and network clusters keyed to
+		// real source links instead of docs cross-referencing each other.
+		if link.Type == "documents" {
+			continue
+		}
 		weight := int64(link.Weight * 10)
 		if weight <= 0 {
 			continue

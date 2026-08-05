@@ -229,3 +229,69 @@ func TestBuild_PopulatesMetricsAndHubFlag(t *testing.T) {
 		t.Errorf("HubCount = %d, want 1", graph.Metrics.HubCount)
 	}
 }
+
+func TestBuild_DocumentKeywordLinksDoNotSkewHubMetrics(t *testing.T) {
+	docs := []ir.Document{
+		{
+			Path:     "hub.go",
+			Format:   "golang",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "hub.go#Hub", Type: "struct", Name: "Hub"}},
+		},
+		{
+			Path:     "l1.go",
+			Format:   "golang",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "l1.go#L1", Type: "struct", Name: "L1"}},
+		},
+		{
+			Path:     "l2.go",
+			Format:   "golang",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "l2.go#L2", Type: "struct", Name: "L2"}},
+		},
+		{
+			// Path contains every entity name, so the analyzer's
+			// "documents" keyword pass fires three 0.6-weight edges.
+			Path:     "docs/hub_l1_l2.md",
+			Format:   "markdown",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{},
+		},
+	}
+	// hub.go couples to both leaves via real extracted edges.
+	docs[0].Links = []ir.Link{
+		{SourceID: "hub.go#Hub", TargetID: "l1.go#L1", Type: "calls", Weight: 1.0, SourceType: ir.LinkSourceExtracted},
+		{SourceID: "hub.go#Hub", TargetID: "l2.go#L2", Type: "calls", Weight: 1.0, SourceType: ir.LinkSourceExtracted},
+	}
+
+	graph, err := Build(docs)
+	if err != nil {
+		t.Fatalf("Build returned unexpected error: %v", err)
+	}
+
+	// The markdown file must stay decoupled from hub ranking: its keyword
+	// links are excluded from the coupling graph.
+	md := graph.Metrics.Documents["docs/hub_l1_l2.md"]
+	if md.Degree != 0 {
+		t.Errorf("markdown doc Degree = %d, want 0 (keyword links must not count)", md.Degree)
+	}
+	if md.IsHub {
+		t.Error("markdown doc should not be flagged a hub from keyword links alone")
+	}
+	if hub := graph.Metrics.Documents["hub.go"]; !hub.IsHub {
+		t.Errorf("hub.go should be the hub, got %+v", hub)
+	}
+	// The inferred keyword edges still exist in the graph for consumers
+	// that want doc-to-code associations.
+	found := false
+	for _, link := range graph.Links {
+		if link.Type == "documents" && link.SourceID == "docs/hub_l1_l2.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected a documents keyword link to remain in graph.Links")
+	}
+}

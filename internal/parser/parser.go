@@ -17,11 +17,12 @@ import (
 // concurrent parsing straightforward.
 func Parse(file scanner.File) (ir.Document, error) {
 	doc := ir.Document{
-		Path:     file.Path,
-		Format:   file.Language,
-		Size:     file.Size,
-		Metadata: make(map[string]string),
-		Entities: []ir.Entity{},
+		Path:      file.Path,
+		Format:    file.Language,
+		Size:      file.Size,
+		UpdatedAt: file.UpdatedAt,
+		Metadata:  make(map[string]string),
+		Entities:  []ir.Entity{},
 	}
 
 	// Dispatch to the language-specific extractor.  The switch is

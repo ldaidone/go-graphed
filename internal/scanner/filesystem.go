@@ -4,16 +4,18 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // File is the scanner's output for a single file.  It carries only
 // the information downstream stages actually need (path, language,
-// size) -- intentionally avoiding full fs.FileInfo to keep the
-// pipeline lightweight and serialisable.
+// size, modification time) -- intentionally avoiding full fs.FileInfo
+// to keep the pipeline lightweight and serialisable.
 type File struct {
-	Path     string
-	Language string
-	Size     int64
+	Path      string
+	Language  string
+	Size      int64
+	UpdatedAt time.Time
 }
 
 // FileSystemScanner walks the OS filesystem using filepath.WalkDir.
@@ -28,6 +30,75 @@ type FileSystemScanner struct {
 	IgnoreFiles []string
 	// NoGitIgnore disables discovery and application of .gitignore files.
 	NoGitIgnore bool
+	// NoDefaultSkip disables the built-in noise filter (VCS internals,
+	// binary assets, lockfiles). When false -- the default -- such files are
+	// excluded even if .gitignore does not mention them.
+	NoDefaultSkip bool
+}
+
+// defaultSkipDirs are VCS/internal directories that are never graph content.
+// They are pruned regardless of .gitignore: indexing a repo's own .git
+// object store is pure noise and drags the corpus up by hundreds of files.
+var defaultSkipDirs = map[string]bool{
+	".git": true,
+	".hg":  true,
+	".svn": true,
+}
+
+// defaultSkipExtensions are binary/asset extensions that carry no semantic
+// graph value: fonts, images, archives, media and compiled artifacts.
+// Source-adjacent binaries with dedicated extractors (pdf, spreadsheet) are
+// deliberately NOT listed so those formats stay indexable.
+var defaultSkipExtensions = map[string]bool{
+	// Images
+	"png": true, "jpg": true, "jpeg": true, "gif": true, "svg": true,
+	"webp": true, "ico": true, "bmp": true, "avif": true, "tiff": true,
+	// Fonts
+	"woff": true, "woff2": true, "ttf": true, "otf": true, "eot": true,
+	// Archives
+	"zip": true, "tar": true, "gz": true, "tgz": true, "bz2": true,
+	"xz": true, "rar": true, "7z": true, "dmg": true, "pkg": true,
+	// Media
+	"mp4": true, "mov": true, "mkv": true, "avi": true, "webm": true,
+	"mp3": true, "wav": true, "flac": true, "ogg": true, "aac": true,
+	// Compiled artifacts & source maps
+	"exe": true, "dll": true, "so": true, "dylib": true, "bin": true,
+	"wasm": true, "class": true, "jar": true, "map": true,
+}
+
+// defaultSkipFilenames are boilerplate/OS artifacts that are not graph
+// content: package lockfiles, vendored dependency metadata and filesystem
+// junk that should never be parsed or embedded.
+var defaultSkipFilenames = map[string]bool{
+	"package-lock.json":   true,
+	"yarn.lock":           true,
+	"pnpm-lock.yaml":      true,
+	"bun.lockb":           true,
+	"bun.lock":            true,
+	"go.sum":              true,
+	"cargo.lock":          true,
+	"gemfile.lock":        true,
+	"composer.lock":       true,
+	"poetry.lock":         true,
+	"flake.lock":          true,
+	"npm-shrinkwrap.json": true,
+	".ds_store":           true,
+	"desktop.ini":         true,
+	"thumbs.db":           true,
+}
+
+// defaultSkip reports whether a directory or file should be dropped by the
+// built-in noise filter. VCS dirs are matched by name; files by extension or
+// well-known boilerplate filename.
+func defaultSkip(path string, isDir bool) bool {
+	if isDir {
+		return defaultSkipDirs[strings.ToLower(filepath.Base(path))]
+	}
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+	if defaultSkipExtensions[ext] {
+		return true
+	}
+	return defaultSkipFilenames[strings.ToLower(filepath.Base(path))]
 }
 
 // Scan walks the directory rooted at `root`, collecting every file
@@ -52,6 +123,9 @@ func (s *FileSystemScanner) Scan(root string) ([]File, error) {
 
 		// Skip directories that the ignore set matches, and prune the walk.
 		if d.IsDir() {
+			if !s.NoDefaultSkip && defaultSkip(path, true) {
+				return filepath.SkipDir
+			}
 			if set != nil && set.excluded(path, true) {
 				return filepath.SkipDir
 			}
@@ -70,11 +144,15 @@ func (s *FileSystemScanner) Scan(root string) ([]File, error) {
 		}
 
 		// Append the clean, customized file structure directly into our slice
+		if !s.NoDefaultSkip && defaultSkip(path, false) {
+			return nil
+		}
 		if set == nil || !set.excluded(path, false) {
 			files = append(files, File{
-				Path:     path,
-				Language: detectLanguage(path),
-				Size:     info.Size(),
+				Path:      path,
+				Language:  detectLanguage(path),
+				Size:      info.Size(),
+				UpdatedAt: info.ModTime(),
 			})
 		}
 

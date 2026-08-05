@@ -160,16 +160,15 @@ func downloadModel(modelDir string) (string, error) {
 		return "", fmt.Errorf("failed to download model from %s: HTTP %s", modelDownloadURL, resp.Status)
 	}
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	if err != nil {
-		return "", fmt.Errorf("failed to create %s: %w", dest, err)
-	}
-	written, err := io.Copy(out, resp.Body)
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to write %s: %w", dest, err)
+	var written int64
+	if err := writeFileAtomic(dest, 0644, func(out io.Writer) error {
+		written, err = io.Copy(out, resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to write %s: %w", dest, err)
+		}
+		return nil
+	}); err != nil {
+		return "", err
 	}
 	if written == 0 {
 		return "", fmt.Errorf("downloaded model from %s is empty", modelDownloadURL)
@@ -185,17 +184,47 @@ func copyFile(src, dest string, mode os.FileMode) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
-	if err != nil {
-		return fmt.Errorf("failed to create %s: %w", dest, err)
+	if err := writeFileAtomic(dest, mode, func(out io.Writer) error {
+		if _, err := io.Copy(out, in); err != nil {
+			return fmt.Errorf("failed to copy %s to %s: %w", src, dest, err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	defer out.Close()
+	return nil
+}
 
-	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("failed to copy %s to %s: %w", src, dest, err)
+// writeFileAtomic writes to dest through a temporary file in the same
+// directory that is renamed over dest, so the destination ends up with a fresh
+// inode. Replacing the destination atomically (instead of truncating it in
+// place) matters on macOS: if a running process has the file mapped as its
+// executable — e.g. an active `kg mcp` server launched from the installed
+// binary — truncating and rewriting it in place can make the kernel kill every
+// subsequent exec of that file with SIGKILL until it is replaced by a new
+// inode. Renaming a temp file over the destination leaves the running process
+// on its old inode and hands new execs an intact file.
+func writeFileAtomic(dest string, mode os.FileMode, write func(io.Writer) error) error {
+	dir := filepath.Dir(dest)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dest)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file in %s: %w", dir, err)
 	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("failed to write %s: %w", dest, err)
+	defer os.Remove(tmp.Name())
+
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := write(tmp); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		return fmt.Errorf("failed to replace %s: %w", dest, err)
 	}
 	return nil
 }

@@ -14,6 +14,8 @@ func resetInitFlags() {
 	initAll = false
 	initTargets = nil
 	initBuild = false
+	initNoMCP = false
+	initMCPCmd = ""
 }
 
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -351,7 +353,7 @@ func TestFindSection_TableDriven(t *testing.T) {
 }
 
 func TestAppendRules_TableDriven(t *testing.T) {
-	section := rulesSection("graph.json")
+	section := rulesSection("", "graph.json")
 
 	tests := []struct {
 		name     string

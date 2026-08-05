@@ -72,6 +72,41 @@ func TestInstallBinary(t *testing.T) {
 	}
 }
 
+func TestInstallBinary_ReplacesExistingInode(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("new-binary"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	dest := filepath.Join(binDir, "kg")
+	if err := os.WriteFile(dest, []byte("old-binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := installBinary(src, binDir); err != nil {
+		t.Fatalf("installBinary returned error: %v", err)
+	}
+
+	after, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Errorf("installBinary reused the existing inode; overwriting a running binary in place can SIGKILL later execs on macOS")
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new-binary" {
+		t.Errorf("installed content = %q, want new-binary", data)
+	}
+}
+
 func TestInstallModel(t *testing.T) {
 	src := filepath.Join(t.TempDir(), config.ModelFileName)
 	if err := os.WriteFile(src, []byte("model-content"), 0644); err != nil {

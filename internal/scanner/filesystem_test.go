@@ -230,6 +230,117 @@ func TestFileSystemScanner_Scan_NonexistentRoot(t *testing.T) {
 	}
 }
 
+func TestFileSystemScanner_Scan_DefaultSkip(t *testing.T) {
+	tmp := t.TempDir()
+
+	files := map[string]string{
+		"src/index.js":          "import App from './App'",
+		"src/App.jsx":           "export default () => null",
+		"README.md":             "# Notes",
+		"docs/manual.pdf":       "pdf",
+		"data/report.xlsx":      "xlsx",
+		".git/config":           "hidden",
+		".git/objects/abc123":   "hidden",
+		".hg/store/foo":         "hidden",
+		"assets/logo.png":       "png",
+		"assets/font.woff2":     "font",
+		"static/hero.jpg":       "jpg",
+		"static/hero.svg":       "svg",
+		"static/app.min.js.map": "map",
+		"archives/src.tar.gz":   "tar",
+		"package-lock.json":     "{}",
+		"yarn.lock":             "yarn",
+		"go.sum":                "checksum",
+		"native/binary.wasm":    "wasm",
+	}
+	for path, content := range files {
+		full := filepath.Join(tmp, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var s FileSystemScanner
+	got, err := s.Scan(tmp)
+	if err != nil {
+		t.Fatalf("Scan returned unexpected error: %v", err)
+	}
+
+	byPath := make(map[string]File)
+	for _, f := range got {
+		rel, _ := filepath.Rel(tmp, f.Path)
+		byPath[rel] = f
+	}
+
+	// Source-adjacent formats with dedicated extractors stay indexable.
+	for _, keep := range []string{"src/index.js", "src/App.jsx", "README.md", "docs/manual.pdf", "data/report.xlsx"} {
+		if _, ok := byPath[keep]; !ok {
+			t.Errorf("default skip dropped %q, want it kept", keep)
+		}
+	}
+
+	// VCS internals, binary assets, source maps and lockfiles are noise.
+	for _, drop := range []string{
+		".git/config", ".git/objects/abc123", ".hg/store/foo",
+		"assets/logo.png", "assets/font.woff2", "static/hero.jpg",
+		"static/hero.svg", "static/app.min.js.map", "archives/src.tar.gz",
+		"package-lock.json", "yarn.lock", "go.sum", "native/binary.wasm",
+	} {
+		if _, ok := byPath[drop]; ok {
+			t.Errorf("default skip kept %q, want it dropped", drop)
+		}
+	}
+}
+
+func TestFileSystemScanner_Scan_NoDefaultSkip(t *testing.T) {
+	tmp := t.TempDir()
+	for _, p := range []string{".git/config", "assets/logo.png", "package-lock.json", "src/index.js"} {
+		full := filepath.Join(tmp, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := FileSystemScanner{NoDefaultSkip: true}
+	got, err := s.Scan(tmp)
+	if err != nil {
+		t.Fatalf("Scan returned unexpected error: %v", err)
+	}
+	if len(got) != 4 {
+		t.Errorf("NoDefaultSkip Scan returned %d files, want 4", len(got))
+	}
+}
+
+func TestFileSystemScanner_Scan_PopulatesUpdatedAt(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "main.go")
+	if err := os.WriteFile(path, []byte("package main"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var s FileSystemScanner
+	got, err := s.Scan(tmp)
+	if err != nil {
+		t.Fatalf("Scan returned unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Scan returned %d files, want 1", len(got))
+	}
+	if got[0].UpdatedAt.IsZero() {
+		t.Error("UpdatedAt should be populated from the file's modification time")
+	}
+	want, _ := os.Stat(path)
+	if !got[0].UpdatedAt.Equal(want.ModTime()) {
+		t.Errorf("UpdatedAt = %v, want %v", got[0].UpdatedAt, want.ModTime())
+	}
+}
+
 func TestFileSystemScanner_Scan_EmptyDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	var s FileSystemScanner

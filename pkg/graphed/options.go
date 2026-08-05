@@ -24,6 +24,12 @@ type BuildOptions struct {
 	// NoGitIgnore disables discovery and application of .gitignore files.
 	NoGitIgnore bool
 
+	// NoDefaultSkip disables the scanner's built-in noise filter. When false,
+	// the scanner drops VCS internals (.git, .hg, .svn), binary assets
+	// (fonts, images, archives, media, compiled artifacts) and boilerplate
+	// lockfiles regardless of .gitignore. Set true to index every file.
+	NoDefaultSkip bool
+
 	// Jobs controls how many parser goroutines run in parallel. Zero or a
 	// negative value selects runtime.NumCPU().
 	Jobs int
@@ -38,4 +44,12 @@ type BuildOptions struct {
 	// DBRoot is the base config directory for the BadgerDB vector store.
 	// When empty, the default under the user's home directory is used.
 	DBRoot string
+
+	// SkipEmbedTypes lists entity types that should not produce embeddings.
+	// When nil, DefaultSkipEmbedTypes is used: noisy/structural types whose
+	// semantics are already carried by the graph (imports, links, config
+	// data) are skipped so large projects embed far fewer nodes. "import" and
+	// "package" are always skipped. Pass an explicit list (e.g. an empty
+	// slice) to embed every entity type.
+	SkipEmbedTypes []string
 }

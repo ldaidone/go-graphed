@@ -6,6 +6,7 @@
 package analyzer
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -179,6 +180,59 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 		}
 	}
 
+	// 4b. Cross-file JS/TS module resolution: map import specifiers emitted
+	// by the JS-family parsers onto indexed files so a JS project gets real
+	// cross-file "imports" edges (the Go pass above does the equivalent via
+	// package dirs). Relative specifiers resolve by exact path with the full
+	// JS-family extension set; bare specifiers use src-root and longest-suffix
+	// matching to cover tsconfig "paths"-style aliases. Specifiers that do
+	// not resolve to an indexed file (e.g. node_modules packages) are left
+	// unlinked rather than emitting dangling edges.
+	jsIndex := make(map[string]string)
+	for docPath, doc := range graph.Documents {
+		if !isJSFamily(doc.Format) {
+			continue
+		}
+		jsIndex[stripJSExt(docPath)] = docPath
+	}
+	for _, doc := range graph.Documents {
+		if !isJSFamily(doc.Format) {
+			continue
+		}
+		for _, entity := range doc.Entities {
+			if entity.Type != "import" {
+				continue
+			}
+			target, exact := resolveJSImport(entity.Name, doc.Path, jsIndex)
+			if target == "" || target == doc.Path {
+				continue
+			}
+			// Exact relative resolution follows documented module semantics
+			// (extension order + index fallback), so it is a parsed fact with
+			// full weight. Alias/suffix matches are heuristics and weigh less.
+			weight := 0.8
+			sourceType := ir.LinkSourceInferred
+			resolution := "suffix_match"
+			if exact {
+				weight = 1.0
+				sourceType = ir.LinkSourceExtracted
+				resolution = "exact"
+			}
+			graph.Links = append(graph.Links, ir.Link{
+				SourceID:   doc.Path,
+				TargetID:   target,
+				Type:       "imports",
+				Weight:     weight,
+				SourceType: sourceType,
+				Metadata: map[string]string{
+					"rule":        "module_resolution",
+					"import_path": entity.Name,
+					"resolution":  resolution,
+				},
+			})
+		}
+	}
+
 	// 5. Enforce the provenance invariant: any link that reached the
 	// final graph without an explicit SourceType (e.g. lifted from a
 	// fixture or a hand-built document) is defaulted to "extracted".
@@ -303,4 +357,88 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// jsExtensions are the file suffixes the JS-family import resolver tries, in
+// priority order, when a relative specifier omits one.
+var jsExtensions = []string{
+	".js", ".jsx", ".mjs", ".cjs",
+	".ts", ".tsx", ".mts", ".cts",
+}
+
+// isJSFamily reports whether a format key belongs to the JS/TS family whose
+// parsers emit "import" entities with the raw module specifier as the name.
+func isJSFamily(format string) bool {
+	switch format {
+	case "javascript", "typescript", "tsx":
+		return true
+	}
+	return false
+}
+
+// stripJSExt removes the trailing JS-family extension from a file path,
+// leaving the path in a form that import specifiers can be matched against
+// ("/src/components/App.js" -> "/src/components/App").
+func stripJSExt(p string) string {
+	base := p
+	for _, ext := range jsExtensions {
+		if strings.HasSuffix(p, ext) {
+			base = p[:len(p)-len(ext)]
+			break
+		}
+	}
+	return base
+}
+
+// resolveJSImport maps an import specifier onto an indexed JS-family file.
+// Relative specifiers ("./x", "../y") resolve exactly against the importing
+// file's directory, trying every JS-family extension plus index-file
+// fallbacks; the second return value reports whether that resolution was
+// exact (relative) versus heuristic. Bare/alias specifiers try a "src/" root,
+// the specifier itself, then a longest-suffix match so "components/App"
+// reaches "src/components/App.tsx" without needing tsconfig parsing -- these
+// are heuristic and report exact=false.
+func resolveJSImport(specifier, srcPath string, jsIndex map[string]string) (string, bool) {
+	if specifier == "" {
+		return "", false
+	}
+	if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
+		base := path.Join(path.Dir(srcPath), specifier)
+		for _, ext := range jsExtensions {
+			if target, ok := jsIndex[stripJSExt(base+ext)]; ok {
+				return target, true
+			}
+		}
+		for _, ext := range jsExtensions {
+			if target, ok := jsIndex[stripJSExt(path.Join(base, "index"+ext))]; ok {
+				return target, true
+			}
+		}
+		return "", false
+	}
+
+	// Bare/alias specifiers: "@/components/App" and "~/lib/x" are common
+	// tsconfig alias forms -- strip the leading sigil and try the remainder.
+	trimmed := specifier
+	for _, sigil := range []string{"@/", "~/", "#/"} {
+		if strings.HasPrefix(specifier, sigil) {
+			trimmed = strings.TrimPrefix(specifier, sigil)
+			break
+		}
+	}
+	for _, candidate := range []string{path.Join("src", trimmed), trimmed} {
+		if target, ok := jsIndex[stripJSExt(candidate)]; ok {
+			return target, false
+		}
+	}
+	best, bestLen := "", 0
+	for key, target := range jsIndex {
+		if len(key) > bestLen && strings.HasSuffix(key, "/"+trimmed) {
+			best, bestLen = target, len(key)
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, false
 }

@@ -17,17 +17,18 @@ Language-agnostic knowledge graph generator for source code.
 - **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Dockerfile, and Makefiles, resilient to syntax errors
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
 - **Cross-file package indexing**: Aggregates Go files by package and resolves `part_of` / `imports` edges across directories
+- **JS/TS module resolution**: Resolves `import` specifiers onto indexed files (extension + directory-index fallback, `src/` and tsconfig-style alias suffix matching) so JavaScript/TypeScript projects get real cross-file `imports` edges. Exact relative resolution is tagged `extracted` at full weight; alias/suffix matches are `inferred`
 - **Document-to-code linking**: Connects Markdown/PDF documentation to the code entities they mention
 - **Link provenance**: Every edge is tagged `extracted` (parsed directly from source) or `inferred` (derived by heuristics), so consumers can separate facts from guesses
-- **Global centrality ("God Node") metrics**: Computes per-document degree, weighted degree, and PageRank over the coupling graph and flags hub documents (`is_hub`) — central DB drivers, middleware, and routers surface automatically
+- **Global centrality ("God Node") metrics**: Computes per-document degree, weighted degree, and PageRank over the coupling graph and flags hub documents (`is_hub`) — central DB drivers, middleware, and routers surface automatically. Markdown keyword links are excluded so docs cannot out-rank real source coupling
 - **Subsystem clustering**: Groups documents by directory tree, Go package, and network coupling (greedy modularity) into higher-level domain units
-- **Semantic embeddings**: Optional pure-Go embedding of documents and entities (gte model, no CGO) with incremental rebuilds — unchanged nodes are skipped and stale vectors are pruned
+- **Semantic embeddings**: Optional pure-Go embedding of documents and entities (gte model, no CGO) with incremental rebuilds — unchanged nodes are skipped and stale vectors are pruned. Noisy/structural entity types (imports, links, config data, plain variables) are skipped by default to keep large projects fast; tune with `--embed-skip-types`
 - **Flexible IR**: Intermediate representation supports documents, entities, packages, clusters, and weighted links with metadata
 - **Extensible exporters**: JSON output plus a self-contained HTML visualizer and a markdown report (`kg visualize`); GraphML, RDF, or Cypher can be added as new exporter files
 - **Agent-ready MCP server**: `kg mcp` exposes the graph over stdio with tools for document details, links, entity search, cluster inspection, centrality metrics, and hybrid topological + semantic context narrowing
 - **Go-style path support**: Accepts `./...` wildcard syntax familiar to Go developers
-- **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns
-- **Agent-ready setup**: `kg init` emits per-project agent rules and `kg install` puts the binary + model on PATH globally
+- **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns, and drops VCS internals (`.git`, `.hg`, `.svn`), binary assets (fonts, images, archives, media), and lockfiles by default to keep corpora focused (disable with `--no-default-skip`)
+- **Agent-ready setup**: `kg init` emits per-project agent rules **and** per-client MCP configs wiring the server in, and `kg install` puts the binary + model on PATH globally
 
 ## Installation
 
@@ -60,8 +61,18 @@ make build           # or: go build -o kg ./cmd/kg
 # Honor gitignore and skip build artifacts
 ./kg build . --exclude vendor/ --exclude '*.gen.go'
 
+# VCS internals (.git), binary assets (fonts, images, archives) and
+# lockfiles are skipped by default; pass --no-default-skip to index them
+./kg build . --no-default-skip
+
 # Parallelize parsing across 8 workers
 ./kg build . --jobs 8
+
+# Skip noisy entity types when embedding so large projects build faster.
+# Structural/noisy types (import, link, config properties, variables, ...) are
+# skipped by default; pass "" to embed every entity type.
+./kg build . --embed-skip-types ""
+./kg build . --embed-skip-types function,method,class,heading
 
 # Generate a self-contained interactive visualizer (graph.html) and a
 # markdown report (GRAPH_REPORT.md) summarizing hubs, coupling, and clusters
@@ -96,13 +107,43 @@ make build           # or: go build -o kg ./cmd/kg
 
 # Override detection and emit rules for specific ecosystems
 ./kg init --targets claude,copilot,gemini
-./kg init --all   # every ecosystem: agents, claude, gemini, copilot, codex, cursor, cline, windsurf
+./kg init --all   # every ecosystem: agents, claude, gemini, copilot, codex, cursor, cline, opencode, windsurf
 
 # Build the graph first so the snapshot the rules reference exists
 ./kg init --build
 
-# If the graph snapshot is missing, kg init prints a reminder to run kg build.
+# Rules only — skip writing the client MCP config files below
+./kg init --no-mcp
 
+# Launch the server through a custom command instead of "kg" on PATH
+./kg init --mcp-command /path/to/kg
+
+# If the graph snapshot is missing, kg init prints a reminder to run kg build.
+```
+
+Besides the rule files, `kg init` also writes a project-local MCP config that
+makes each client actually launch `kg mcp` — rule files alone only describe the
+tools. Only the `"kg"` entry is written or replaced; every other key in an
+existing config file is preserved, and files that cannot be parsed are left
+untouched with a warning.
+
+| Target | Rule file | MCP config |
+| --- | --- | --- |
+| agents | `AGENTS.md` | — |
+| opencode | `AGENTS.md` | `opencode.json` / `opencode.jsonc` |
+| claude | `CLAUDE.md` | `.mcp.json` |
+| gemini | `GEMINI.md` | `.gemini/settings.json` |
+| copilot | `.github/copilot-instructions.md` | `.github/mcp.json` |
+| codex | `AGENTS.md` | `.codex/config.toml` |
+| cursor | `.cursor/rules/*.mdc` | `.cursor/mcp.json` |
+| cline | `.clinerules/` | `.cline/mcp.json` |
+| windsurf | `.windsurf/rules/` | global `~/.codeium/windsurf/mcp_config.json` (documented in the rule file; kg never edits files outside the project) |
+
+The generated `kg` entry is project-root relative: it launches `kg mcp --file
+graph.json` (or the `--mcp-command` you pass) and runs in the project directory,
+so the configs stay portable across machines.
+
+```bash
 # Install the binary and the bundled embedding model for global use.
 # The model is downloaded from the go-graphed repository by default so the
 # installed copy is always complete; --model-path copies a local file instead.
@@ -129,7 +170,7 @@ Configure the embedding model path and vector-store directory with
 
 | Tool | Purpose |
 | --- | --- |
-| `get_narrowed_context` | Hybrid topological + semantic search returning a focused, token-bounded context slice |
+| `get_narrowed_context` | Hybrid topological + semantic search returning a focused, token-bounded context slice. `entryPath` accepts a single file or a directory (a directory expands to every indexed file beneath it) |
 | `get_document_details` | Metadata, extracted AST entities, centrality scores, and clusters for one file |
 | `get_document_links` | Structural incoming/outgoing links for a file |
 | `list_documents_by_format` | List files by format (golang, markdown, ...) |
@@ -139,7 +180,9 @@ Configure the embedding model path and vector-store directory with
 | `get_graph_metrics` | Global centrality metrics and hub ("God Node") documents |
 
 `kg init` generates per-project agent rules documenting this workflow and the
-tools above, so agents query the local graph before calling cloud models.
+tools above, and writes each client's MCP config so `kg mcp` actually launches
+(see [Agent Rules and Global Install](#agent-rules-and-global-install)). Agents
+then query the local graph before calling cloud models.
 
 ### Configuration
 
@@ -194,6 +237,8 @@ func main() {
         "internal/parser/parser.go": {
             "Path": "internal/parser/parser.go",
             "Format": "golang",
+            "Size": 2048,
+            "UpdatedAt": "2026-08-05T11:30:00Z",
             "Entities": [
                 {
                     "ID": "internal/parser/parser.go#Parse",

@@ -22,6 +22,38 @@ import (
 	"github.com/ldaidone/go-graphed/internal/utils/vector_store"
 )
 
+// DefaultSkipEmbedTypes are entity types that do not produce embeddings by
+// default. They duplicate structural information already captured by the
+// graph — import/package/link are graph edges, config data (property, array,
+// object, ...) is tree structure, and plain variable assignments rarely
+// answer a semantic query — while costing a full model pass each. Skipping
+// them cuts the embedding volume of a large project by a large factor with
+// little retrieval loss; functions, methods, types, headings and tables still
+// embed. Override via BuildOptions.SkipEmbedTypes.
+var DefaultSkipEmbedTypes = []string{
+	"import", "package",
+	"link", "image-asset", "page",
+	"property", "sequence-item", "container", "array", "object", "data-table",
+	"variable", "export",
+}
+
+// skipEmbedTypes builds the set of entity types that must not be embedded.
+func skipEmbedTypes(types []string) map[string]bool {
+	skip := map[string]bool{"import": true, "package": true}
+	if types == nil {
+		types = DefaultSkipEmbedTypes
+	}
+	for _, t := range types {
+		if t = strings.TrimSpace(t); t != "" {
+			skip[t] = true
+		}
+	}
+	return skip
+}
+
+// Build implements the full scan -> parse -> analyze -> export pipeline,
+// optionally indexing semantic embeddings for every document and entity when a
+// model is configured.
 func Build(opts BuildOptions) error {
 	var err error
 	var files []scanner.File
@@ -35,9 +67,10 @@ func Build(opts BuildOptions) error {
 	// Stage 1: discover every file under the root directory, honoring
 	// .gitignore files and any user-supplied Exclude patterns.
 	fs := scanner.FileSystemScanner{
-		Exclude:     opts.Exclude,
-		IgnoreFiles: opts.IgnoreFiles,
-		NoGitIgnore: opts.NoGitIgnore,
+		Exclude:       opts.Exclude,
+		IgnoreFiles:   opts.IgnoreFiles,
+		NoGitIgnore:   opts.NoGitIgnore,
+		NoDefaultSkip: opts.NoDefaultSkip,
 	}
 	files, err = fs.Scan(opts.Root)
 	if err != nil {
@@ -142,9 +175,7 @@ func Build(opts BuildOptions) error {
 		// it whole files is pure waste (a 2 KB and a 100 KB payload produce
 		// identical vectors). Bounded, content-bearing payloads keep semantic
 		// retrieval working while the batch runs concurrently across workers.
-		// "import" and "package" entities are skipped: they are structural
-		// facts already captured by the graph's dependency links, and their
-		// embeddings would just duplicate path strings.
+		skip := skipEmbedTypes(opts.SkipEmbedTypes)
 		jobs := make([]embedJob, 0, len(graph.Documents)*2)
 		for path, docNode := range graph.Documents {
 			body, readErr := os.ReadFile(path)
@@ -166,9 +197,10 @@ func Build(opts BuildOptions) error {
 			// 2. Entity vectors: structural AST entities embed the exact
 			//    source slice they cover, bounded so a huge function cannot
 			//    hog the batch. Unannotated entities fall back to a type/name
-			//    stub.
+			//    stub. Noisy/structural types are skipped to keep the batch
+			//    small on large projects.
 			for _, entity := range docNode.Entities {
-				if entity.Type == "import" || entity.Type == "package" {
+				if skip[entity.Type] {
 					continue
 				}
 				entityPayload := fmt.Sprintf("Type: %s, Name: %s. Defined in %s.", entity.Type, entity.Name, path)

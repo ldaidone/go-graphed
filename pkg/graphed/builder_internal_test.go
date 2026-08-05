@@ -76,3 +76,44 @@ func TestEmbedWorkers(t *testing.T) {
 		t.Errorf("embedWorkers(64) = %d, want %d", got, embedWorkersMax)
 	}
 }
+
+func TestSkipEmbedTypes_DefaultSkipsNoisyTypes(t *testing.T) {
+	skip := skipEmbedTypes(nil)
+	for _, keep := range []string{"function", "method", "struct", "interface", "heading", "table", "class", "target"} {
+		if skip[keep] {
+			t.Errorf("default skip list must not skip %q", keep)
+		}
+	}
+	for _, drop := range []string{"import", "package", "link", "property", "array", "variable"} {
+		if !skip[drop] {
+			t.Errorf("default skip list must skip %q", drop)
+		}
+	}
+}
+
+func TestSkipEmbedTypes_ImportPackageAlwaysSkipped(t *testing.T) {
+	// import/package are forced even when the caller requests every type.
+	skip := skipEmbedTypes([]string{})
+	if !skip["import"] || !skip["package"] {
+		t.Error("import/package must always be skipped")
+	}
+	for _, keep := range []string{"link", "property", "function", "heading"} {
+		if skip[keep] {
+			t.Errorf("empty override must not skip %q", keep)
+		}
+	}
+}
+
+func TestSkipEmbedTypes_OverrideReplacesDefault(t *testing.T) {
+	// An explicit list replaces the default list entirely, not appends to it.
+	skip := skipEmbedTypes([]string{"function"})
+	if !skip["function"] {
+		t.Error("explicit skip list must include function")
+	}
+	if skip["link"] {
+		t.Error("explicit skip list must not silently keep default types")
+	}
+	if !skip["import"] || !skip["package"] {
+		t.Error("import/package must always be skipped")
+	}
+}

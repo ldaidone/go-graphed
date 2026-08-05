@@ -554,3 +554,126 @@ func TestBuild_SetsBuiltAt(t *testing.T) {
 		t.Error("expected BuiltAt to be set by Build")
 	}
 }
+
+func TestBuild_JSModuleResolution(t *testing.T) {
+	docs := []ir.Document{
+		{
+			Path:     "src/index.js",
+			Format:   "javascript",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{
+				{ID: "src/index.js#import:./components/App", Type: "import", Name: "./components/App"},
+				{ID: "src/index.js#import:./utils/format", Type: "import", Name: "./utils/format"},
+				{ID: "src/index.js#import:./legacy", Type: "import", Name: "./legacy"},
+				{ID: "src/index.js#import:react", Type: "import", Name: "react"},
+			},
+		},
+		{
+			Path:     "src/components/App.tsx",
+			Format:   "tsx",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{
+				{ID: "src/components/App.tsx#import:../utils/format", Type: "import", Name: "../utils/format"},
+				{ID: "src/components/App.tsx#import:@/lib/store", Type: "import", Name: "@/lib/store"},
+			},
+		},
+		{
+			Path:     "src/utils/format.mjs",
+			Format:   "javascript",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "src/utils/format.mjs#format", Type: "function", Name: "format"}},
+		},
+		{
+			Path:     "src/legacy/index.js",
+			Format:   "javascript",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "src/legacy/index.js#Legacy", Type: "class", Name: "Legacy"}},
+		},
+		{
+			Path:     "src/lib/store.ts",
+			Format:   "typescript",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "src/lib/store.ts#store", Type: "variable", Name: "store"}},
+		},
+	}
+
+	graph, err := Build(docs)
+	if err != nil {
+		t.Fatalf("Build returned unexpected error: %v", err)
+	}
+
+	edges := make(map[string]bool)
+	prov := make(map[string]string)
+	for _, link := range graph.Links {
+		if link.Type != "imports" {
+			continue
+		}
+		edges[link.SourceID+" -> "+link.TargetID] = true
+		prov[link.SourceID+" -> "+link.TargetID] = link.SourceType
+	}
+
+	want := []struct {
+		edge   string
+		src    string
+		weight float64
+	}{
+		{"src/index.js -> src/components/App.tsx", ir.LinkSourceExtracted, 1.0},         // ./components/App, extension resolution
+		{"src/index.js -> src/utils/format.mjs", ir.LinkSourceExtracted, 1.0},           // ./utils/format
+		{"src/index.js -> src/legacy/index.js", ir.LinkSourceExtracted, 1.0},            // ./legacy, directory index fallback
+		{"src/components/App.tsx -> src/utils/format.mjs", ir.LinkSourceExtracted, 1.0}, // ../utils/format
+		{"src/components/App.tsx -> src/lib/store.ts", ir.LinkSourceInferred, 0.8},      // @/lib/store alias suffix match
+	}
+	for _, w := range want {
+		if !edges[w.edge] {
+			t.Errorf("missing imports edge %q", w.edge)
+		}
+		if prov[w.edge] != w.src {
+			t.Errorf("imports edge %q SourceType = %q, want %q", w.edge, prov[w.edge], w.src)
+		}
+	}
+	for e := range edges {
+		found := false
+		for _, w := range want {
+			if e == w.edge {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("unexpected imports edge %q", e)
+		}
+	}
+	// Weights must match provenance: extracted edges carry full weight.
+	for _, link := range graph.Links {
+		if link.Type != "imports" {
+			continue
+		}
+		wantWeight := 0.8
+		if link.SourceType == ir.LinkSourceExtracted {
+			wantWeight = 1.0
+		}
+		if link.Weight != wantWeight {
+			t.Errorf("imports edge %s -> %s Weight = %v, want %v", link.SourceID, link.TargetID, link.Weight, wantWeight)
+		}
+	}
+}
+
+func TestBuild_JSModuleResolution_SelfImportIgnored(t *testing.T) {
+	docs := []ir.Document{
+		{
+			Path:     "src/self.js",
+			Format:   "javascript",
+			Metadata: map[string]string{},
+			Entities: []ir.Entity{{ID: "src/self.js#import:./self", Type: "import", Name: "./self"}},
+		},
+	}
+	graph, err := Build(docs)
+	if err != nil {
+		t.Fatalf("Build returned unexpected error: %v", err)
+	}
+	for _, link := range graph.Links {
+		if link.Type == "imports" {
+			t.Errorf("self-import produced an imports edge: %s -> %s", link.SourceID, link.TargetID)
+		}
+	}
+}
