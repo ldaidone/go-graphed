@@ -108,6 +108,123 @@ func Parse(file scanner.File) (ir.Document, error) {
 		doc.Links = links
 		doc.Metadata["processor"] = "ts-extractor"
 
+	case "python":
+		entities, links, err := extractPythonData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("python parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "python-extractor"
+
+	case "rust":
+		entities, links, err := extractRustData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("rust parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "rust-extractor"
+
+	case "sql":
+		entities, links, err := extractSQLData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("sql parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "sql-extractor"
+
+	case "bash":
+		entities, links, err := extractBashData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("bash parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "bash-extractor"
+
+	case "java":
+		entities, links, err := extractJavaData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("java parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "java-extractor"
+
+	case "kotlin":
+		entities, links, err := extractKotlinData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("kotlin parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "kotlin-extractor"
+
+	case "php":
+		entities, links, err := extractPHPData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("php parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "php-extractor"
+
+	case "csharp":
+		entities, links, err := extractCSharpData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("csharp parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "csharp-extractor"
+
+	case "swift":
+		entities, links, err := extractSwiftData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("swift parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "swift-extractor"
+
+	case "ruby":
+		entities, links, err := extractRubyData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("ruby parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "ruby-extractor"
+
+	case "elixir":
+		entities, links, err := extractElixirData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("elixir parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "elixir-extractor"
+
+	case "c":
+		entities, links, err := extractCData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("c parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "c-extractor"
+
+	case "cpp":
+		entities, links, err := extractCppData(file.Path)
+		if err != nil {
+			return ir.Document{}, fmt.Errorf("cpp parser failed: %w", err)
+		}
+		doc.Entities = entities
+		doc.Links = links
+		doc.Metadata["processor"] = "cpp-extractor"
+
 	case "dockerfile":
 		entities, err := extractDockerfileData(file.Path)
 		if err != nil {

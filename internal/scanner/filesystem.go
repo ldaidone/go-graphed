@@ -195,6 +195,34 @@ func detectLanguage(path string) string {
 		return "toml"
 	case "js", "jsx", "mjs", "cjs":
 		return "javascript"
+	case "py", "pyi", "pyw":
+		return "python"
+	case "rs":
+		return "rust"
+	case "sql":
+		return "sql"
+	case "sh", "bash":
+		return "bash"
+	case "java":
+		return "java"
+	case "kt", "kts":
+		return "kotlin"
+	case "php":
+		return "php"
+	case "cs", "csx":
+		return "csharp"
+	case "swift":
+		return "swift"
+	case "rb", "gemspec":
+		return "ruby"
+	case "ex", "exs":
+		return "elixir"
+	case "c":
+		return "c"
+	case "h":
+		return "c"
+	case "cpp", "cc", "cxx", "hpp", "hh", "hxx":
+		return "cpp"
 	case "ts", "mts", "cts":
 		return "typescript"
 	case "tsx":
@@ -217,6 +245,10 @@ func detectLanguageByFilename(path string) string {
 		return "dockerfile"
 	case "makefile", "gnumakefile":
 		return "make"
+	case "gemfile", "rakefile", "podfile":
+		return "ruby"
+	case "mix.exs":
+		return "elixir"
 	}
 	return ""
 }

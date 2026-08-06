@@ -14,7 +14,7 @@ Language-agnostic knowledge graph generator for source code.
 ## Features
 
 - **Language-agnostic pipeline**: Scanner, parser, analyzer, and exporter are fully decoupled — add a new language by writing one extractor function
-- **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Dockerfile, and Makefiles, resilient to syntax errors
+- **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, Elixir, C, C++, Dockerfile, and Makefiles, resilient to syntax errors
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
 - **Cross-file package indexing**: Aggregates Go files by package and resolves `part_of` / `imports` edges across directories
 - **JS/TS module resolution**: Resolves `import` specifiers onto indexed files (extension + directory-index fallback, `src/` and tsconfig-style alias suffix matching) so JavaScript/TypeScript projects get real cross-file `imports` edges. Exact relative resolution is tagged `extracted` at full weight; alias/suffix matches are `inferred`
@@ -291,8 +291,8 @@ func main() {
 
 ### Core Components
 
-- **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, json, yaml, toml, javascript, typescript, dockerfile, make, unstructured) by extension and convention filenames. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
-- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph.
+- **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, json, yaml, toml, javascript, typescript, python, rust, sql, bash, java, kotlin, php, csharp, dockerfile, make, unstructured) by extension and convention filenames. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
+- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, Elixir, C, C++, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph. Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, C, and C++ run on a shared config-driven two-pass walker (`internal/parser/walker.go`) that new languages plug into; Elixir uses a dedicated two-pass extractor (its grammar expresses modules, functions, and directives as uniform call nodes); migrating Go/JS/TS onto the walker is a later, optional step.
 - **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), lifts parser-produced document links (e.g., Go `calls` links), aggregates Go packages and resolves `imports`, groups documents into clusters (directory / module / network coupling via greedy modularity), and computes global centrality ("God Node") metrics (degree, weighted degree, PageRank) that flag hub documents.
 - **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. `JSON` writes graph.json; `HTML` renders a self-contained, dependency-free interactive visualizer (force layout, pan/zoom, filtering, per-node detail panel); `Report` writes a markdown summary mirroring the `kg metrics` and `kg clusters` terminal views. Other formats can be added as separate files.
 - **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`, `Package`, `Cluster`, `Metrics`) that all pipeline stages agree on. Links carry a provenance tag (`extracted` vs `inferred`); documents can be flagged as hubs (`is_hub`).
@@ -310,6 +310,19 @@ func main() {
 | TOML        | Implemented   | tree-sitter                   |
 | JavaScript  | Implemented   | tree-sitter                   |
 | TypeScript/TSX | Implemented | tree-sitter                 |
+| Python      | Implemented   | tree-sitter (shared walker)   |
+| Rust        | Implemented   | tree-sitter (shared walker)   |
+| SQL         | Implemented   | tree-sitter (shared walker)   |
+| Shell/Bash  | Implemented   | tree-sitter (shared walker)   |
+| Java        | Implemented   | tree-sitter (shared walker)   |
+| Kotlin      | Implemented   | tree-sitter (shared walker)   |
+| PHP         | Implemented   | tree-sitter (shared walker)   |
+| C#          | Implemented   | tree-sitter (shared walker)   |
+| Swift       | Implemented   | tree-sitter (shared walker)   |
+| Ruby        | Implemented   | tree-sitter (shared walker)   |
+| Elixir      | Implemented   | tree-sitter (dedicated)       |
+| C           | Implemented   | tree-sitter (shared walker)   |
+| C++         | Implemented   | tree-sitter (shared walker)   |
 | Dockerfile  | Implemented   | tree-sitter                   |
 | Makefile    | Implemented   | tree-sitter                   |
 | PDF         | Implemented   | pure-Go text extraction       |
