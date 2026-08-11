@@ -2,8 +2,10 @@ package graphed
 
 // BuildOptions holds every knob the public Build function accepts.
 type BuildOptions struct {
-	// Root is the directory to scan.  May use Go-style "./..." paths;
-	// cleanSourcePath normalises them before Build is called.
+	// Root is the directory to scan, resolved relative to the current working
+	// directory. The CLI accepts Go-style "./..." wildcards and normalizes them
+	// to a plain directory before calling Build; the library API expects the
+	// already-normalized path.
 	Root string
 
 	// Output is the target file path for the exported graph.

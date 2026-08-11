@@ -60,6 +60,7 @@ func NewSQLiteStore(dir string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
+// SaveVector stores a vector by ID without associated metadata.
 func (s *SQLiteStore) SaveVector(id string, vec []float32) error {
 	norm := computeNorm(vec)
 	blob, err := encodeVectorData(vectorData{Vector: vec, Norm: norm, Meta: nil})
@@ -69,6 +70,7 @@ func (s *SQLiteStore) SaveVector(id string, vec []float32) error {
 	return s.upsert(id, blob)
 }
 
+// GetVector retrieves the vector stored under id.
 func (s *SQLiteStore) GetVector(id string) ([]float32, error) {
 	data, err := s.getRaw(id)
 	if err != nil {
@@ -77,6 +79,7 @@ func (s *SQLiteStore) GetVector(id string) ([]float32, error) {
 	return data.Vector, nil
 }
 
+// GetAllVectors returns every stored vector keyed by its ID.
 func (s *SQLiteStore) GetAllVectors() (map[string][]float32, error) {
 	rows, err := s.db.Query(`SELECT id, data FROM vectors`)
 	if err != nil {
@@ -100,6 +103,7 @@ func (s *SQLiteStore) GetAllVectors() (map[string][]float32, error) {
 	return vectors, rows.Err()
 }
 
+// Close releases the underlying SQLite database connection.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }

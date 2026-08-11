@@ -18,30 +18,41 @@ import (
 
 // --- Tool Argument Schemas ---
 
+// DocumentQueryArgs are the input parameters for the get_document_details and
+// get_document_links tools.
 type DocumentQueryArgs struct {
 	Path string `json:"path" jsonschema:"required,description=The explicit file path identifier of the target document (e.g., internal/analyzer/analyzer.go)"`
 }
 
+// FilterQueryArgs are the input parameters for the list_documents_by_format
+// tool.
 type FilterQueryArgs struct {
 	Format string `json:"format" jsonschema:"required,description=Filter constraint by file format (e.g., golang, markdown)"`
 }
 
+// EntityFilterArgs are the input parameters for the find_entities_by_type
+// tool.
 type EntityFilterArgs struct {
 	Type string `json:"type" jsonschema:"required,description=The structural entity type to scan for (e.g., struct, interface, heading)"`
 }
 
+// ClusterListArgs are the input parameters for the list_clusters tool.
 type ClusterListArgs struct {
 	Kind string `json:"kind" jsonschema:"description=Filter clusters by derivation kind: directory, module, or network. Empty returns every cluster."`
 }
 
+// ClusterDetailArgs are the input parameters for the get_cluster tool.
 type ClusterDetailArgs struct {
 	ID string `json:"id" jsonschema:"required,description=The unique cluster identifier (e.g., directory:internal/ir)"`
 }
 
+// MetricsArgs are the input parameters for the get_graph_metrics tool.
 type MetricsArgs struct {
 	MaxResults int `json:"maxResults" jsonschema:"description=Maximum number of ranked documents to return. 0 means every ranked document."`
 }
 
+// NarrowContextArgs are the input parameters for the get_narrowed_context
+// tool.
 type NarrowContextArgs struct {
 	EntryPath   string   `json:"entryPath" jsonschema:"required,description=The file path where the bug or feature investigation starts."`
 	SearchQuery string   `json:"searchQuery" jsonschema:"required,description=The semantic intent or feature description to slice context against (e.g. error handling in DB routines)."`

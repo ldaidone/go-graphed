@@ -33,7 +33,7 @@ func NewBadgerStore(path string) (*BadgerStore, error) {
 	return &BadgerStore{db: db}, nil
 }
 
-// VectorStore interface methods
+// SaveVector stores a vector by ID without associated metadata.
 func (s *BadgerStore) SaveVector(id string, vec []float32) error {
 	// Use the same data structure as Add to maintain consistency
 	var norm float32
@@ -58,6 +58,7 @@ func (s *BadgerStore) SaveVector(id string, vec []float32) error {
 	})
 }
 
+// GetVector retrieves the vector stored under id.
 func (s *BadgerStore) GetVector(id string) ([]float32, error) {
 	var data vectorData
 
@@ -115,6 +116,7 @@ func (s *BadgerStore) updateToNewFormat(id string, data *vectorData) error {
 	})
 }
 
+// GetAllVectors returns every stored vector keyed by its ID.
 func (s *BadgerStore) GetAllVectors() (map[string][]float32, error) {
 	vectors := make(map[string][]float32)
 
@@ -167,6 +169,7 @@ func (s *BadgerStore) GetAllVectors() (map[string][]float32, error) {
 	return vectors, err
 }
 
+// Close releases the underlying BadgerDB database.
 func (s *BadgerStore) Close() error {
 	return s.db.Close()
 }
@@ -280,6 +283,8 @@ func (s *BadgerStore) Get(id string) ([]float32, float32, map[string]any, error)
 	return data.Vector, data.Norm, data.Meta, nil
 }
 
+// Search returns the top-k vectors most similar to query by cosine
+// similarity, computed against the stored precomputed norms.
 func (s *BadgerStore) Search(query []float32, k int) ([]embedx.SearchResult, error) {
 	results := make([]embedx.SearchResult, 0)
 

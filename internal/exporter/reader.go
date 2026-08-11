@@ -10,7 +10,11 @@ import (
 )
 
 var (
+	// ErrEmptyGraphFilePath reports that no graph file path was provided.
 	ErrEmptyGraphFilePath = errors.New("graph file path cannot be empty")
+
+	// ErrCorruptGraphSchema reports that a loaded file does not carry a valid
+	// knowledge graph schema.
 	ErrCorruptGraphSchema = errors.New("loaded file does not contain a valid code knowledge graph schema")
 )
 

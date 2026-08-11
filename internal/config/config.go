@@ -37,10 +37,20 @@ const (
 	// under which per-project BadgerDB stores are created.
 	DefaultDBRoot = ".config/graphed"
 
-	// Environment variable names.
-	EnvModelPath  = "GRAPHEAD_MODEL_PATH"
-	EnvDBRoot     = "GRAPHEAD_DB_ROOT"
+	// EnvModelPath is the environment variable that configures the embedding
+	// model path.
+	EnvModelPath = "GRAPHEAD_MODEL_PATH"
+
+	// EnvDBRoot is the environment variable that configures the vector store
+	// base directory.
+	EnvDBRoot = "GRAPHEAD_DB_ROOT"
+
+	// EnvDimensions is the environment variable that configures the embedding
+	// vector width.
 	EnvDimensions = "GRAPHEAD_DIMENSIONS"
+
+	// EnvConfigFile is the environment variable that configures the config
+	// file path.
 	EnvConfigFile = "GRAPHEAD_CONFIG_FILE"
 )
 

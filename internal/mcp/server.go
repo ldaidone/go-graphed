@@ -36,6 +36,10 @@ type Options struct {
 	DBRoot string
 }
 
+// Server is the MCP protocol controller exposing a loaded graph as JSON-RPC
+// tools over stdio. It owns the vector store and the embedding model for the
+// server's lifetime; call Close (or let Start's deferred cleanup run) to
+// release them.
 type Server struct {
 	metoroServer *mcp_golang.Server
 	graph        *ir.Graph
