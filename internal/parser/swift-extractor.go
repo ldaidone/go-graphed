@@ -71,6 +71,7 @@ func swiftConfig() *LanguageConfig {
 		Imports: []ImportSpec{
 			{NodeType: "import_declaration", SourceChildTypes: []string{"identifier", "scoped_identifier"}},
 		},
+		RefNodeTypes: []string{"type_identifier"},
 		Calls: []CallSpec{
 			{NodeType: "call_expression", CalleeNodeTypes: []string{"simple_identifier"}},
 		},

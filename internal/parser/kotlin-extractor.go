@@ -33,6 +33,12 @@ func kotlinConfig() *LanguageConfig {
 		Language: grammars.KotlinLanguage(),
 		Declarations: []DeclarationSpec{
 			{
+				NodeType:     "package_header",
+				Kind:         "package",
+				NameNodeType: "identifier",
+				Package:      true,
+			},
+			{
 				NodeType:     "class_declaration",
 				Kind:         "class",
 				NameNodeType: "type_identifier",
@@ -59,6 +65,7 @@ func kotlinConfig() *LanguageConfig {
 		Imports: []ImportSpec{
 			{NodeType: "import_header", SourceChildTypes: []string{"identifier"}},
 		},
+		RefNodeTypes: []string{"type_identifier"},
 		Calls: []CallSpec{
 			{NodeType: "call_expression", CalleeNodeTypes: []string{"simple_identifier"}},
 		},

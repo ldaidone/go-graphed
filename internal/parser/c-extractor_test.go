@@ -52,6 +52,18 @@ func TestParse_CFile_Includes(t *testing.T) {
 			t.Errorf("expected import %q, got %v", want, names)
 		}
 	}
+	kinds := map[string]string{}
+	for _, e := range doc.Entities {
+		if e.Type == "import" {
+			kinds[e.Name] = e.Metadata["include_kind"]
+		}
+	}
+	if kinds["stdio.h"] != "system" {
+		t.Errorf("stdio.h include_kind = %q, want system", kinds["stdio.h"])
+	}
+	if kinds["util.h"] != "local" {
+		t.Errorf("util.h include_kind = %q, want local", kinds["util.h"])
+	}
 	for _, e := range doc.Entities {
 		if e.Type == "import" && (e.ID == "" || e.Name == "") {
 			t.Errorf("import entity has empty ID or Name: %+v", e)

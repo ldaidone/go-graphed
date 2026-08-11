@@ -27,6 +27,26 @@ go.work.sum
 # env file
 .env
 
+# Benchmark harness — private query corpora (kept locally, never committed)
+/testdata/benchmark/queries/study_case_a.json
+/testdata/benchmark/queries/study_case_b.json
+
+# Personal / scratch notes
+/docs/mirar.txt
+/docs/benchmark.md
+
+# Generated / AI-context scratch artifacts
+/GRAPH_REPORT.md
+/graph.html
+/repomix-output.md
+/repomix-output.xml
+/benchy/
+kg-bench*
+
+# OS / Python hygiene
+.DS_Store
+__pycache__/
+
 # Editor/IDE
 .idea/
 .vscode/

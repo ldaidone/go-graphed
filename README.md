@@ -4,6 +4,7 @@ Language-agnostic knowledge graph generator for source code.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub stars](https://img.shields.io/github/stars/ldaidone/go-graphed.svg)](https://github.com/ldaidone/go-graphed/stargazers)
+![Beta](https://img.shields.io/badge/status-beta-yellow)
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/leodaido)
 
@@ -11,17 +12,29 @@ Language-agnostic knowledge graph generator for source code.
 
 `go-graphed` scans a directory of source code files, extracts semantic entities (structs, interfaces, headings, tables, etc.), and produces a JSON knowledge graph describing the codebase's structure as documents, entities, and relationships. It follows a clean **scanner → parser → analyzer → exporter** pipeline, making it easy to add new languages or output formats without touching the rest of the system. The built graph powers a **local MCP server** so AI agents can query the codebase structure and get semantically narrowed context without shipping your code to a cloud model.
 
+## Why go-graphed?
+
+AI agents are only as good as the context you give them. Without a graph, answering a question about a codebase means reading **~90k–460k tokens** of source. `go-graphed` turns your repo into a local knowledge graph — entities, cross-file links, hub ("God Node") files, and subsystem clusters — and serves it over MCP so agents pull a **~1.5–1.7k-token, context-bounded slice** instead.
+
+Measured, reproducible numbers ([full write-up](docs/BENCHMARK_RESULTS.md)):
+
+- **52–272× fewer tokens** than reading the whole codebase per question.
+- **Equal or better recall than `grep` with 12–168× fewer tokens** — grep's real cost is opening the files it matches.
+- **Hub detection matches structural intuition** (DTOs, middleware, and routers surface as the coupling hotspots).
+- **Local-only**: graphs and vector stores live on your machine; nothing leaves it.
+
 ## Features
 
 - **Language-agnostic pipeline**: Scanner, parser, analyzer, and exporter are fully decoupled — add a new language by writing one extractor function
 - **Tree-sitter powered**: Uses pure-Go tree-sitter grammars for Go, Markdown, JSON, YAML, TOML, JS/TS, Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, Elixir, C, C++, Dockerfile, and Makefiles, resilient to syntax errors
 - **Cross-reference heuristics**: Automatically infers `implements` links between structs and interfaces via naming conventions
-- **Cross-file package indexing**: Aggregates Go files by package and resolves `part_of` / `imports` edges across directories
-- **JS/TS module resolution**: Resolves `import` specifiers onto indexed files (extension + directory-index fallback, `src/` and tsconfig-style alias suffix matching) so JavaScript/TypeScript projects get real cross-file `imports` edges. Exact relative resolution is tagged `extracted` at full weight; alias/suffix matches are `inferred`
+- **Cross-file import resolution**: One generic resolver maps `import` entities onto indexed files for every language with a module system — JS/TS relative paths and `@/` aliases, Java/Kotlin dotted packages, Python modules, Rust `use` paths, PHP namespaces, C# `using`, C/C++ quoted headers, Ruby requires, Elixir aliases, Swift modules. Exact relative/local imports are tagged `extracted` at full weight; namespace/suffix matches are `inferred`. Unresolvable system or external imports are left unlinked, never dangling
+- **Cross-file reference resolution**: Type/identifier mentions (Kotlin/Java/Swift/C++ constructor injection, fields, supertypes, and variable declarations) resolve onto the classes/structs that declare them, disambiguated by the file's imports, so a Spring-style controller → service → repository chain shows real `references` edges
+- **Package/module aggregation**: Aggregates files by their declared package (Go package clauses, JVM package headers, PHP/C# namespaces, Elixir's top-level module) into package nodes with `part_of` edges — module clusters, hub ranking, and topological traversal all work for non-Go languages
 - **Document-to-code linking**: Connects Markdown/PDF documentation to the code entities they mention
 - **Link provenance**: Every edge is tagged `extracted` (parsed directly from source) or `inferred` (derived by heuristics), so consumers can separate facts from guesses
 - **Global centrality ("God Node") metrics**: Computes per-document degree, weighted degree, and PageRank over the coupling graph and flags hub documents (`is_hub`) — central DB drivers, middleware, and routers surface automatically. Markdown keyword links are excluded so docs cannot out-rank real source coupling
-- **Subsystem clustering**: Groups documents by directory tree, Go package, and network coupling (greedy modularity) into higher-level domain units
+- **Subsystem clustering**: Groups documents by directory tree, Go package (or any language's package/module), and network coupling (greedy modularity) into higher-level domain units
 - **Semantic embeddings**: Optional pure-Go embedding of documents and entities (gte model, no CGO) with incremental rebuilds — unchanged nodes are skipped and stale vectors are pruned. Noisy/structural entity types (imports, links, config data, plain variables) are skipped by default to keep large projects fast; tune with `--embed-skip-types`
 - **Flexible IR**: Intermediate representation supports documents, entities, packages, clusters, and weighted links with metadata
 - **Extensible exporters**: JSON output plus a self-contained HTML visualizer and a markdown report (`kg visualize`); GraphML, RDF, or Cypher can be added as new exporter files
@@ -30,7 +43,50 @@ Language-agnostic knowledge graph generator for source code.
 - **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns, and drops VCS internals (`.git`, `.hg`, `.svn`), binary assets (fonts, images, archives, media), and lockfiles by default to keep corpora focused (disable with `--no-default-skip`)
 - **Agent-ready setup**: `kg init` emits per-project agent rules **and** per-client MCP configs wiring the server in, and `kg install` puts the binary + model on PATH globally
 
+## Benchmarks
+
+Measured on a real Kotlin/Spring microservice, a React/Redux web app, and
+go-graphed itself (all re-run through a reproducible, dependency-free harness —
+see [`testdata/benchmark/`](testdata/benchmark/README.md)). Retrieval is scored
+on the same token metric agents actually pay, with golden queries whose answer
+files were hand-validated as graph-reachable. Nothing here is an LLM's opinion.
+
+| Case study | read-all baseline | `kg_narrowed` (1.5k cap) | `kg_topology` | grep top-10 |
+| --- | --- | --- | --- | --- |
+| go-graphed (Go) | 458,869 tok | 1,557 tok · recall 0.55 · **272×** | 1,254 tok · recall 0.48 | 262,452 tok · recall 0.50 |
+| Kotlin microservice (private) | 398,313 tok | 1,717 tok · recall 0.43 · **233×** | 10,102 tok · recall 1.00 | 101,910 tok · recall 0.33 |
+| React/Redux app (private) | 91,313 tok | 1,593 tok · recall 0.64 · **52×** | 1,141 tok · recall 1.00 | 18,820 tok · recall 0.14 |
+
+**What the numbers mean**
+
+- **`kg_narrowed` is the token-saver**: ~1.5–1.7k tokens per question, 52–272× less than reading the codebase. That's the number an agent actually pays.
+- **`kg_topology` is the reliable file-locator**: `get_document_links` returns every 1-hop neighbor, reaching recall 1.00 when answers are 1-hop away — at a cost between grep's and narrowed context's.
+- **grep loses because of what it costs after the match**: the keyword step is cheap, but the agent then opens whole files. On the smallest repo grep gets recall 0.14 at 18,820 tokens; `kg` gets 0.64 at 1,593.
+- Hub/God-Node ranking was cross-checked against the real repository layout on all three codebases.
+
+Full methodology, per-query breakdowns, and known caveats:
+[`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md).
+
+## Known limitations (beta)
+
+Owned, not hidden — reproduced and tracked in the benchmark report:
+
+1. **`kg build` can index its own output.** If `graph.json` is written inside the scanned root it is indexed as a JSON document. A self-exclusion fix is planned; the benchmark harness excludes it today.
+2. **Kotlin same-package references are unlinked.** A Kotlin service referencing a sibling service in the same package (no `import`) has no graph edge, so it is not 1-hop reachable. Cross-package references work.
+3. **Test files can rank as hubs.** A test-deweighting option for hub ranking is planned.
+4. **`get_narrowed_context` is entry-file-dominant.** A hub entry file's own snippets can exhaust the token budget before neighbor files appear; a per-file snippet cap is under consideration.
+5. **Repo-boundary only.** External APIs, config, and DB schemas are not linked; `extracted`/`inferred` provenance tags make clear what is a fact vs. a heuristic.
+6. **Snapshot staleness.** The graph is a build snapshot — rebuild with `kg build` after significant code changes.
+
 ## Installation
+
+The `kg` CLI binary:
+
+```bash
+go install github.com/ldaidone/go-graphed/cmd/kg@latest
+```
+
+The Go library (`graphed.Build`, `graphed.BuildOptions`):
 
 ```bash
 go get github.com/ldaidone/go-graphed
@@ -105,7 +161,9 @@ make build           # or: go build -o kg ./cmd/kg
 # overwritten: the kg block is appended, and re-runs replace it in place.
 ./kg init
 
-# Override detection and emit rules for specific ecosystems
+# Skip auto-detection and target specific ecosystems explicitly instead.
+# Existing rule files are still never overwritten: the kg block is appended,
+# or replaced in place between its markers on re-runs.
 ./kg init --targets claude,copilot,gemini
 ./kg init --all   # every ecosystem: agents, claude, gemini, copilot, codex, cursor, cline, opencode, windsurf
 
@@ -292,8 +350,8 @@ func main() {
 ### Core Components
 
 - **Scanner** (`internal/scanner/`): Walks the filesystem and detects file types (golang, pdf, markdown, spreadsheet, json, yaml, toml, javascript, typescript, python, rust, sql, bash, java, kotlin, php, csharp, dockerfile, make, unstructured) by extension and convention filenames. The `Scanner` interface allows swapping in alternative implementations (e.g., git-aware traversal).
-- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, Elixir, C, C++, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph. Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, C, and C++ run on a shared config-driven two-pass walker (`internal/parser/walker.go`) that new languages plug into; Elixir uses a dedicated two-pass extractor (its grammar expresses modules, functions, and directives as uniform call nodes); migrating Go/JS/TS onto the walker is a later, optional step.
-- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), lifts parser-produced document links (e.g., Go `calls` links), aggregates Go packages and resolves `imports`, groups documents into clusters (directory / module / network coupling via greedy modularity), and computes global centrality ("God Node") metrics (degree, weighted degree, PageRank) that flag hub documents.
+- **Parser** (`internal/parser/`): Dispatches to language-specific extractors. Go, Markdown, JSON, YAML, TOML, JavaScript, TypeScript/TSX, Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, Elixir, C, C++, Dockerfile, and Makefiles are implemented via pure-Go tree-sitter; PDF uses a pure-Go text extractor and spreadsheets use the stdlib + excelize. Go extraction additionally produces a within-file call graph. Python, Rust, SQL, Bash, Java, Kotlin, PHP, C#, Swift, Ruby, C, and C++ run on a shared config-driven two-pass walker (`internal/parser/walker.go`) that new languages plug into (it also emits `reference` entities for type mentions and `package` entities for package/namespace clauses); Elixir uses a dedicated two-pass extractor (its grammar expresses modules, functions, and directives as uniform call nodes); migrating Go/JS/TS onto the walker is a later, optional step.
+- **Analyzer** (`internal/analyzer/`): Assembles documents into a `Graph`, builds a global entity registry, runs heuristic passes to infer cross-reference links (naming conventions, path keyword matching), lifts parser-produced document links (e.g., within-file `calls` links), resolves cross-file `imports` for every language with an import shape, resolves type `references` against the global declaration index with import-context disambiguation, aggregates packages (Go, JVM, PHP/C#, Elixir) and emits `part_of` edges, groups documents into clusters (directory / module / network coupling via greedy modularity), and computes global centrality ("God Node") metrics (degree, weighted degree, PageRank) that flag hub documents.
 - **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. `JSON` writes graph.json; `HTML` renders a self-contained, dependency-free interactive visualizer (force layout, pan/zoom, filtering, per-node detail panel); `Report` writes a markdown summary mirroring the `kg metrics` and `kg clusters` terminal views. Other formats can be added as separate files.
 - **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`, `Package`, `Cluster`, `Metrics`) that all pipeline stages agree on. Links carry a provenance tag (`extracted` vs `inferred`); documents can be flagged as hubs (`is_hub`).
 - **MCP** (`internal/mcp/`): The MCP server used by `kg mcp`, exposing the graph as JSON-RPC tools over stdio, including the hybrid topological + semantic `get_narrowed_context` tool backed by the vector store.

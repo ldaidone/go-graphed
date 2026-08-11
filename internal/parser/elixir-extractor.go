@@ -193,6 +193,25 @@ func (e *elixirExtractor) inspect(n *sitter.Node) {
 			Name:     name,
 			Metadata: lineMetadata(n),
 		})
+		// Top-level modules double as the file's package: the first
+		// dotted segment ("Geometry" from "Geometry.Shapes") is the
+		// aggregation key the analyzer groups modules by.
+		if len(e.scopeStack) == 0 {
+			pkg := name
+			if i := strings.Index(name, "."); i >= 0 {
+				pkg = name[:i]
+			}
+			e.entities = append(e.entities, ir.Entity{
+				ID:   fmt.Sprintf("%s#package:%s", e.path, pkg),
+				Type: "package",
+				Name: pkg,
+				Metadata: map[string]string{
+					"start_line":   lineMetadata(n)["start_line"],
+					"end_line":     lineMetadata(n)["end_line"],
+					"package_path": pkg,
+				},
+			})
+		}
 		e.scopeStack = append(e.scopeStack, name)
 		if body := e.childByType(n, "do_block"); body != nil {
 			e.inspect(body)

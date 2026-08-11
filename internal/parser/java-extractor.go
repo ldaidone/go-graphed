@@ -30,6 +30,12 @@ func javaConfig() *LanguageConfig {
 		Language: grammars.JavaLanguage(),
 		Declarations: []DeclarationSpec{
 			{
+				NodeType:     "package_declaration",
+				Kind:         "package",
+				NameNodeType: "scoped_identifier",
+				Package:      true,
+			},
+			{
 				NodeType:   "class_declaration",
 				Kind:       "class",
 				NameField:  "name",
@@ -58,6 +64,7 @@ func javaConfig() *LanguageConfig {
 		Imports: []ImportSpec{
 			{NodeType: "import_declaration", SourceChildTypes: []string{"scoped_identifier"}},
 		},
+		RefNodeTypes: []string{"type_identifier"},
 		Calls: []CallSpec{
 			{NodeType: "method_invocation", FunctionField: "name", ObjectField: "object"},
 			{NodeType: "object_creation_expression", FunctionField: "type"},

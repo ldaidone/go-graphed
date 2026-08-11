@@ -1,0 +1,48 @@
+{
+  "name": "go-graphed",
+  "description": "Golden query corpus for the go-graphed self-host benchmark. Answers are the file path(s) a competent agent must reach to answer the query.",
+  "queries": [
+    {
+      "id": "q1_build_pipeline",
+      "query": "how does the build command assemble the scanner-parser-analyzer-exporter pipeline and when does embedding happen",
+      "entry": "pkg/graphed/builder.go",
+      "answers": ["pkg/graphed/builder.go", "internal/analyzer/analyzer.go"]
+    },
+    {
+      "id": "q2_import_resolution",
+      "query": "which analyzer pass resolves cross-file imports for languages like java kotlin python and typescript",
+      "entry": "internal/analyzer/analyzer.go",
+      "answers": ["internal/analyzer/imports.go", "internal/analyzer/analyzer.go"]
+    },
+    {
+      "id": "q3_mcp_narrowed",
+      "query": "how does the MCP server implement get_narrowed_context with topological hops and a token budget",
+      "entry": "internal/mcp/handlers.go",
+      "answers": ["internal/mcp/handlers.go", "internal/mcp/server.go"]
+    },
+    {
+      "id": "q4_walker_extractors",
+      "query": "what is the shared two-pass walker that tree-sitter extractors for python rust and kotlin plug into",
+      "entry": "internal/parser/walker.go",
+      "answers": ["internal/parser/walker.go", "internal/parser/parser.go"]
+    },
+    {
+      "id": "q5_html_export",
+      "query": "where is the self-contained interactive HTML visualizer rendered and what data does it read",
+      "entry": "internal/exporter/html.go",
+      "answers": ["internal/exporter/html.go", "internal/exporter/json.go"]
+    },
+    {
+      "id": "q6_scanner_skip",
+      "query": "which files and directories does the scanner skip by default and how does gitignore-aware scanning work",
+      "entry": "internal/scanner/filesystem.go",
+      "answers": ["internal/scanner/filesystem.go", "internal/scanner/ignore.go"]
+    },
+    {
+      "id": "q7_cli_subcommands",
+      "query": "what subcommands does the kg CLI expose for building graphs visualizing metrics clusters and serving MCP",
+      "entry": "cmd/kg/main.go",
+      "answers": ["cmd/kg/main.go", "internal/cli/build.go", "internal/cli/mcp.go"]
+    }
+  ]
+}

@@ -31,6 +31,12 @@ func csharpConfig() *LanguageConfig {
 		Language: grammars.CSharpLanguage(),
 		Declarations: []DeclarationSpec{
 			{
+				NodeType:     "namespace_declaration",
+				Kind:         "package",
+				NameNodeType: "qualified_name",
+				Package:      true,
+			},
+			{
 				NodeType:   "class_declaration",
 				Kind:       "class",
 				NameField:  "name",

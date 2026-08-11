@@ -35,6 +35,12 @@ func phpConfig() *LanguageConfig {
 		Language: grammars.PhpLanguage(),
 		Declarations: []DeclarationSpec{
 			{
+				NodeType:     "namespace_definition",
+				Kind:         "package",
+				NameNodeType: "namespace_name",
+				Package:      true,
+			},
+			{
 				NodeType:   "class_declaration",
 				Kind:       "class",
 				NameField:  "name",

@@ -80,6 +80,20 @@ type snippet struct {
 	Content   string
 }
 
+// noiseSnippetTypes are entity types whose lines duplicate structural
+// information already captured by the graph -- import/package are link
+// edges, reference mentions resolve to those links -- so rendering them
+// as code snippets wastes the token budget on the least informative
+// lines of a file (a Kotlin service's import list can exceed half a
+// 1500-token context before any declaration appears). They are still
+// queryable via get_document_links/get_document_details; get_narrowed_context
+// simply stops injecting them as body text.
+var noiseSnippetTypes = map[string]bool{
+	"import":    true,
+	"package":   true,
+	"reference": true,
+}
+
 // narrowedJSON is the structured payload returned when Format == "json".
 type narrowedJSON struct {
 	EntryPath   string               `json:"entryPath"`
@@ -300,6 +314,7 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 
 	// Map out valid semantic nodes meeting score metrics
 	semanticMatches := make(map[string]float32)
+	entityScores := make(map[string]float32)
 	for _, match := range matches {
 		if match.Score >= args.MinScore {
 			// Extract clean root file path from Entity ID strings if necessary
@@ -308,6 +323,13 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 			// Keep the highest similarity score if multiple entities match within the same file
 			if existingScore, exists := semanticMatches[cleanPath]; !exists || match.Score > existingScore {
 				semanticMatches[cleanPath] = match.Score
+			}
+			// Keep per-entity scores so the renderers can surface the
+			// best-matching declarations first instead of emitting a file
+			// in source order (where imports and early boilerplate would
+			// otherwise consume the token budget first).
+			if existingScore, exists := entityScores[match.ID]; !exists || match.Score > existingScore {
+				entityScores[match.ID] = match.Score
 			}
 		}
 	}
@@ -344,16 +366,18 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 	})
 
 	if strings.EqualFold(args.Format, "json") {
-		return s.renderNarrowedJSON(args, results)
+		return s.renderNarrowedJSON(args, results, entityScores)
 	}
-	return s.renderNarrowedMarkdown(args, results)
+	return s.renderNarrowedMarkdown(args, results, entityScores)
 }
 
 // renderNarrowedMarkdown formats the context manifest as human-readable
 // Markdown. Each file is sliced into entity-bounded snippets (falling back
 // to the whole file when no line metadata exists) so only the relevant
-// blocks are injected into the LLM context.
-func (s *Server) renderNarrowedMarkdown(args NarrowContextArgs, results []contextResult) (*mcp_golang.ToolResponse, error) {
+// blocks are injected into the LLM context. Snippets that matched the
+// semantic query surface first; noisy one-line entities (imports,
+// packages, reference mentions) are skipped entirely.
+func (s *Server) renderNarrowedMarkdown(args NarrowContextArgs, results []contextResult, entityScores map[string]float32) (*mcp_golang.ToolResponse, error) {
 	var sb strings.Builder
 	sb.WriteString("## Semantically Narrowed Code Context\n")
 	sb.WriteString(fmt.Sprintf("- **Entrypoint Target:** `%s`\n", args.EntryPath))
@@ -404,7 +428,7 @@ func (s *Server) renderNarrowedMarkdown(args NarrowContextArgs, results []contex
 		}
 
 		lang := fenceLanguage(r.Doc.Format)
-		snips := entitySnippets(r.Path, content, r.Doc.Entities)
+		snips := entitySnippets(r.Path, content, r.Doc.Entities, entityScores)
 		if len(snips) == 0 {
 			snips = []snippet{{
 				Path:      r.Path,
@@ -443,7 +467,7 @@ func (s *Server) renderNarrowedMarkdown(args NarrowContextArgs, results []contex
 
 // renderNarrowedJSON formats the same manifest as a structured JSON payload,
 // useful for programmatic consumers that parse the tool output.
-func (s *Server) renderNarrowedJSON(args NarrowContextArgs, results []contextResult) (*mcp_golang.ToolResponse, error) {
+func (s *Server) renderNarrowedJSON(args NarrowContextArgs, results []contextResult, entityScores map[string]float32) (*mcp_golang.ToolResponse, error) {
 	out := narrowedJSON{
 		EntryPath:   args.EntryPath,
 		SearchQuery: args.SearchQuery,
@@ -466,7 +490,7 @@ func (s *Server) renderNarrowedJSON(args NarrowContextArgs, results []contextRes
 		if err != nil {
 			jr.ReadError = "file not found on disk"
 		} else {
-			snips := entitySnippets(r.Path, content, r.Doc.Entities)
+			snips := entitySnippets(r.Path, content, r.Doc.Entities, entityScores)
 			if len(snips) == 0 {
 				snips = []snippet{{
 					Path:      r.Path,
@@ -553,13 +577,25 @@ func (s *Server) isStale(doc *ir.Document) bool {
 }
 
 // entitySnippets slices file content into one snippet per line-annotated
-// entity, collapsing duplicate ranges. Documents without line metadata
+// entity, collapsing duplicate ranges. Noisy entity types (imports,
+// packages, reference mentions) are skipped, and remaining snippets are
+// ordered by their semantic match score (descending, stable so equal
+// scores keep source order) so the most relevant declarations surface
+// before the token budget runs out. Documents without line metadata
 // yield no snippets (callers fall back to the whole file).
-func entitySnippets(path string, content []byte, entities []ir.Entity) []snippet {
+func entitySnippets(path string, content []byte, entities []ir.Entity, entityScores map[string]float32) []snippet {
 	lines := strings.Split(string(content), "\n")
-	var snips []snippet
+	type ranked struct {
+		entity ir.Entity
+		start  int
+		end    int
+	}
+	var eligible []ranked
 	seen := make(map[[2]int]bool)
 	for _, e := range entities {
+		if noiseSnippetTypes[e.Type] {
+			continue
+		}
 		start, end := entityLineRange(e)
 		if start <= 0 {
 			continue
@@ -575,12 +611,21 @@ func entitySnippets(path string, content []byte, entities []ir.Entity) []snippet
 			continue
 		}
 		seen[key] = true
+		eligible = append(eligible, ranked{entity: e, start: start, end: end})
+	}
+
+	sort.SliceStable(eligible, func(i, j int) bool {
+		return entityScores[eligible[i].entity.ID] > entityScores[eligible[j].entity.ID]
+	})
+
+	snips := make([]snippet, 0, len(eligible))
+	for _, r := range eligible {
 		snips = append(snips, snippet{
 			Path:      path,
-			StartLine: start,
-			EndLine:   end,
-			Label:     e.Type + " " + e.Name,
-			Content:   strings.Join(lines[start-1:end], "\n"),
+			StartLine: r.start,
+			EndLine:   r.end,
+			Label:     r.entity.Type + " " + r.entity.Name,
+			Content:   strings.Join(lines[r.start-1:r.end], "\n"),
 		})
 	}
 	return snips

@@ -71,6 +71,7 @@ func cppConfig() *LanguageConfig {
 		Calls: []CallSpec{
 			{NodeType: "call_expression", FunctionField: "function"},
 		},
-		InspectHook: cIncludeHook,
+		RefNodeTypes: []string{"type_identifier"},
+		InspectHook:  cIncludeHook,
 	}
 }

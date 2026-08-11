@@ -1548,3 +1548,105 @@ func TestHandleGetNarrowedContext_HubMarker(t *testing.T) {
 		t.Errorf("expected hub marker in narrowed context:\n%s", responseText(t, resp))
 	}
 }
+
+func TestEntitySnippets_FiltersNoiseAndSortsByScore(t *testing.T) {
+	content := "package com.x\n\nimport com.y.A\nimport com.z.B\n\nclass Cart {\n\tfun publish() {\n\t\tprintln(\"x\")\n\t}\n}\n"
+	entities := []ir.Entity{
+		{ID: "s.kt#package", Type: "package", Name: "com.x", Metadata: map[string]string{"start_line": "1", "end_line": "1"}},
+		{ID: "s.kt#import:com.y.A", Type: "import", Name: "com.y.A", Metadata: map[string]string{"start_line": "3", "end_line": "3"}},
+		{ID: "s.kt#import:com.z.B", Type: "import", Name: "com.z.B", Metadata: map[string]string{"start_line": "4", "end_line": "4"}},
+		{ID: "s.kt#reference:Cart@0", Type: "reference", Name: "Cart", Metadata: map[string]string{"start_line": "6", "end_line": "6"}},
+		{ID: "s.kt#class:Cart", Type: "class", Name: "Cart", Metadata: map[string]string{"start_line": "6", "end_line": "12"}},
+		{ID: "s.kt#function:Cart.publish", Type: "function", Name: "Cart.publish", Metadata: map[string]string{"start_line": "7", "end_line": "9"}},
+	}
+	scores := map[string]float32{
+		"s.kt#class:Cart":            0.7,
+		"s.kt#function:Cart.publish": 0.95,
+	}
+
+	snips := entitySnippets("s.kt", []byte(content), entities, scores)
+
+	// package, import, and reference entities must not become snippets.
+	if len(snips) != 2 {
+		t.Fatalf("expected 2 snippets after noise filtering, got %d: %+v", len(snips), snips)
+	}
+	// The higher-scoring declaration surfaces first.
+	if snips[0].Label != "function Cart.publish" {
+		t.Errorf("expected publish to surface first, got %q", snips[0].Label)
+	}
+	if snips[1].Label != "class Cart" {
+		t.Errorf("expected class second, got %q", snips[1].Label)
+	}
+	if strings.Contains(snips[0].Content, "import com.y.A") {
+		t.Errorf("import lines leaked into a snippet:\n%s", snips[0].Content)
+	}
+}
+
+func TestEntitySnippets_UnscoredEntitiesKeepSourceOrder(t *testing.T) {
+	content := "a\nb\nc\n"
+	entities := []ir.Entity{
+		{ID: "f.go#struct:First", Type: "struct", Name: "First", Metadata: map[string]string{"start_line": "1", "end_line": "1"}},
+		{ID: "f.go#struct:Second", Type: "struct", Name: "Second", Metadata: map[string]string{"start_line": "2", "end_line": "2"}},
+	}
+	snips := entitySnippets("f.go", []byte(content), entities, nil)
+	if len(snips) != 2 || snips[0].Label != "struct First" || snips[1].Label != "struct Second" {
+		t.Errorf("expected stable source order without scores, got: %+v", snips)
+	}
+}
+
+func TestHandleGetNarrowedContext_ImportsDoNotStarveBudget(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), "Service.kt")
+	src := "package com.acme.orders.service\n\n" +
+		"import com.acme.orders.api.Dto\n" +
+		"import com.acme.orders.api.Entity\n" +
+		"import com.acme.orders.client.PdfClient\n\n" +
+		"class OrderService {\n\tfun publish() {\n\t\tprintln(\"x\")\n\t}\n}\n"
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities := []ir.Entity{
+		{ID: entry + "#package", Type: "package", Name: "com.acme.orders.service", Metadata: map[string]string{"start_line": "1", "end_line": "1"}},
+		{ID: entry + "#import:com.acme.orders.api.Dto", Type: "import", Name: "com.acme.orders.api.Dto", Metadata: map[string]string{"start_line": "3", "end_line": "3"}},
+		{ID: entry + "#import:com.acme.orders.api.Entity", Type: "import", Name: "com.acme.orders.api.Entity", Metadata: map[string]string{"start_line": "4", "end_line": "4"}},
+		{ID: entry + "#import:com.acme.orders.client.PdfClient", Type: "import", Name: "com.acme.orders.client.PdfClient", Metadata: map[string]string{"start_line": "5", "end_line": "5"}},
+		{ID: entry + "#class:OrderService", Type: "class", Name: "OrderService", Metadata: map[string]string{"start_line": "7", "end_line": "11"}},
+		{ID: entry + "#function:OrderService.publish", Type: "function", Name: "OrderService.publish", Metadata: map[string]string{"start_line": "8", "end_line": "10"}},
+	}
+
+	engine := embedx.New(embedx.NewMemoryStore())
+	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		graph: &ir.Graph{
+			Documents: map[string]*ir.Document{
+				entry: {Path: entry, Format: "kotlin", Entities: entities},
+			},
+			Links: []ir.Link{},
+		},
+		embedEngine: engine,
+		embedder:    &fakeEmbedder{},
+	}
+
+	// A tight budget that the old renderer would spend entirely on the
+	// package/import snippets must now reach the method body.
+	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
+		EntryPath:   entry,
+		SearchQuery: "how does publish work",
+		MaxHops:     1,
+		MinScore:    0.65,
+		MaxTokens:   25,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := responseText(t, resp)
+	if strings.Contains(text, "import com.acme.orders") {
+		t.Errorf("import lines should not consume the token budget:\n%s", text)
+	}
+	if !strings.Contains(text, "fun publish") {
+		t.Errorf("method body should survive the budget once imports are skipped:\n%s", text)
+	}
+}

@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -132,14 +133,24 @@ func clusterByNetwork(graph *ir.Graph) []ir.Cluster {
 	}
 
 	clusters := make([]ir.Cluster, 0, len(groups))
+	used := make(map[string]int)
 	for label, members := range groups {
 		if len(members) < 2 {
 			continue
 		}
 		sort.Strings(members)
-		name := commonDocDirPrefix(members)
+		name := networkClusterName(members)
 		if name == "" {
 			name = label
+		}
+		// A community's shared-ancestor label can collide with another's
+		// (two coupling groups both deepest under "src"), so disambiguate
+		// with a numeric suffix instead of silently merging names.
+		if n, taken := used[name]; taken {
+			used[name] = n + 1
+			name = fmt.Sprintf("%s #%d", name, n+1)
+		} else {
+			used[name] = 1
 		}
 		clusters = append(clusters, ir.Cluster{
 			ID:      ir.ClusterID(ir.ClusterKindNetwork, label),
@@ -417,4 +428,34 @@ func commonDocDirPrefix(members []string) string {
 		prefix = commonDirPrefix(prefix, dir)
 	}
 	return prefix
+}
+
+// networkClusterName names a network community after the directory holding
+// the most members, so a coupling group that spans several sibling trees
+// keeps a specific label instead of collapsing onto a shallow shared
+// ancestor (every community under "src" used to be named "src"), and one
+// that includes a stray root-level file is not renamed after that file
+// (its "." directory used to zero the shared prefix). When no directory
+// holds a majority (thinly scattered members), it falls back to the shared
+// ancestor, then to "" so the caller falls back to the community id.
+func networkClusterName(members []string) string {
+	counts := make(map[string]int, len(members))
+	for _, m := range members {
+		counts[filepath.Dir(m)]++
+	}
+
+	modal, best := "", 0
+	for dir, c := range counts {
+		if best == 0 || c > best ||
+			(c == best && (len(dir) > len(modal) || (len(dir) == len(modal) && dir < modal))) {
+			modal, best = dir, c
+		}
+	}
+	if best >= 2 && modal != "" && modal != "." {
+		return modal
+	}
+	if prefix := commonDocDirPrefix(members); prefix != "" && prefix != "." {
+		return prefix
+	}
+	return ""
 }

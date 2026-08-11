@@ -312,3 +312,63 @@ func TestClusterByNetwork_Deterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestNetworkClusterName(t *testing.T) {
+	cases := []struct {
+		name    string
+		members []string
+		want    string
+	}{
+		{"single directory", []string{"src/a/f1.go", "src/a/f2.go"}, "src/a"},
+		{
+			"majority subtree beats shallow ancestor",
+			[]string{
+				"src/main/kotlin/com/x/service/A.kt",
+				"src/main/kotlin/com/x/service/B.kt",
+				"src/main/kotlin/com/x/repo/C.kt",
+			},
+			"src/main/kotlin/com/x/service",
+		},
+		{
+			"stray root file does not rename the community",
+			[]string{".gitlab-ci.yml", "src/service/A.kt", "src/service/B.kt"},
+			"src/service",
+		},
+		{"scattered members fall back to shared ancestor", []string{"src/a/1.go", "src/b/1.go", "src/c/1.go"}, "src"},
+		{"all root members yield no name", []string{"a.go", "b.go"}, ""},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := networkClusterName(tt.members); got != tt.want {
+				t.Errorf("networkClusterName(%v) = %q, want %q", tt.members, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClusterByNetwork_DisambiguatesCollidingNames(t *testing.T) {
+	graph := &ir.Graph{
+		Documents: map[string]*ir.Document{
+			"a/x/1.go": {},
+			"a/x/2.go": {},
+			"a/x/3.go": {},
+			"a/x/4.go": {},
+		},
+		Links: []ir.Link{
+			{SourceID: "a/x/1.go", TargetID: "a/x/2.go", Type: "calls", Weight: 1.0},
+			{SourceID: "a/x/3.go", TargetID: "a/x/4.go", Type: "calls", Weight: 1.0},
+		},
+	}
+
+	clusters := clusterByNetwork(graph)
+	if len(clusters) != 2 {
+		t.Fatalf("expected 2 disjoint network clusters, got %d: %+v", len(clusters), clusters)
+	}
+	names := map[string]bool{}
+	for _, c := range clusters {
+		names[c.Name] = true
+	}
+	if !names["a/x"] || !names["a/x #2"] {
+		t.Errorf("colliding network names should be disambiguated, got %v", names)
+	}
+}

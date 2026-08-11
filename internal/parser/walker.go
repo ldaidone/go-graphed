@@ -30,6 +30,14 @@ type LanguageConfig struct {
 	// disables within-file "calls" links.
 	Calls []CallSpec
 
+	// RefNodeTypes lists node types whose text is a type/identifier
+	// mention worth resolving across files (e.g. "type_identifier" for
+	// Kotlin/Java/Swift/C++).  During the extraction pass every such node
+	// also emits a "reference" entity so the analyzer can resolve it
+	// against the global entity registry and lift cross-file "references"
+	// edges.  Empty disables reference emission.
+	RefNodeTypes []string
+
 	// SkipNodeTypes prunes recursion into node types that cannot contain
 	// declarations or call expressions (comments, literals).  Safe
 	// pruning keeps the walk over large files fast.
@@ -97,6 +105,13 @@ type DeclarationSpec struct {
 	// interface, and enum declarations share one node type,
 	// distinguished by keyword children).
 	KindByChild map[string]string
+
+	// Package marks package/namespace clause declarations (Java's
+	// package_declaration, PHP's namespace_definition, ...).  The emitted
+	// entity carries a "package_path" metadata equal to the package text
+	// so the analyzer can aggregate every file declaring the same
+	// package into one module unit regardless of language.
+	Package bool
 }
 
 // ImportSpec maps a grammar node type onto an import entity.  The
@@ -366,6 +381,10 @@ func (w *Walker) inspect(n *sitter.Node) {
 		w.emitCall(n)
 	}
 
+	if w.isRefNode(n) {
+		w.emitReference(n)
+	}
+
 	if w.cfg.InspectHook != nil {
 		w.cfg.InspectHook(w, n)
 	}
@@ -395,6 +414,9 @@ func (w *Walker) enter(n *sitter.Node) bool {
 			Name:     fullName,
 			Metadata: lineMetadata(n),
 		})
+		if spec.Package {
+			w.entities[len(w.entities)-1].Metadata["package_path"] = fullName
+		}
 	}
 	if spec.ClassScope {
 		w.scopeStack = append(w.scopeStack, fullName)
@@ -460,6 +482,43 @@ func (w *Walker) callSpecFor(n *sitter.Node) *CallSpec {
 		}
 	}
 	return nil
+}
+
+// isRefNode reports whether n's node type is configured as a reference
+// (cross-file-resolvable identifier mention).
+func (w *Walker) isRefNode(n *sitter.Node) bool {
+	if len(w.cfg.RefNodeTypes) == 0 {
+		return false
+	}
+	typ := n.Type(w.lang())
+	for _, t := range w.cfg.RefNodeTypes {
+		if t == typ {
+			return true
+		}
+	}
+	return false
+}
+
+// emitReference emits a "reference" entity for an identifier mention.  The
+// ID is disambiguated by byte offset so repeated mentions of the same name
+// stay distinct, and the analyzer resolves the entity to a declaration
+// somewhere else in the graph.  Mentions that resolve to a declaration in
+// this same file are skipped -- they are self-references, not cross-file
+// references.
+func (w *Walker) emitReference(n *sitter.Node) {
+	name := strings.TrimSpace(string(w.content[n.StartByte():n.EndByte()]))
+	if name == "" {
+		return
+	}
+	if _, ok := w.declared[name]; ok {
+		return
+	}
+	w.entities = append(w.entities, ir.Entity{
+		ID:       fmt.Sprintf("%s#reference:%s@%d", w.path, name, n.StartByte()),
+		Type:     "reference",
+		Name:     name,
+		Metadata: lineMetadata(n),
+	})
 }
 
 // calleeName extracts the callee text from a call node per its spec.

@@ -63,20 +63,28 @@ func cConfig() *LanguageConfig {
 		Calls: []CallSpec{
 			{NodeType: "call_expression", FunctionField: "function"},
 		},
-		InspectHook: cIncludeHook,
+		RefNodeTypes: []string{"type_identifier"},
+		InspectHook:  cIncludeHook,
 	}
 }
 
 // cIncludeHook emits an "import" entity for a preprocessor #include,
-// normalizing both <angle> and "quoted" path forms.
+// normalizing both <angle> and "quoted" path forms.  The include_kind
+// metadata distinguishes local "quoted" headers (resolvable against the
+// indexed tree) from <angle> system headers (external, left unlinked by
+// the analyzer's import-resolution pass).
 func cIncludeHook(w *Walker, n *sitter.Node) {
 	if n.Type(w.lang()) != "preproc_include" {
 		return
 	}
 	module := ""
+	kind := "system"
 	for _, t := range []string{"system_lib_string", "string_literal", "identifier"} {
 		if c := w.childOfType(n, t); c != nil {
 			module = strings.TrimSpace(string(w.content[c.StartByte():c.EndByte()]))
+			if t == "string_literal" {
+				kind = "local"
+			}
 			break
 		}
 	}
@@ -90,4 +98,5 @@ func cIncludeHook(w *Walker, n *sitter.Node) {
 		Name:     module,
 		Metadata: lineMetadata(n),
 	})
+	w.entities[len(w.entities)-1].Metadata["include_kind"] = kind
 }

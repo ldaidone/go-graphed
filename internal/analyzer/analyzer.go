@@ -6,7 +6,6 @@
 package analyzer
 
 import (
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,6 +37,30 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 	for _, doc := range graph.Documents {
 		for _, entity := range doc.Entities {
 			globalEntities[entity.Name] = entity
+		}
+	}
+
+	// 2b. Build a declaration index for the reference-resolution pass:
+	//    every type-like entity keyed by name, tagged with the document
+	//    that declares it.  The reference pass prefers declarations in
+	//    documents the referencing file imports, and otherwise requires
+	//    a globally unique name so common identifiers do not produce
+	//    arbitrary edges.  Namespaced declarations ("geom.Circle",
+	//    "Geometry.Shapes") are additionally indexed under their bare
+	//    final segment so unqualified mentions ("Circle") find them;
+	//    the import-context disambiguation keeps same-named types in
+	//    different packages apart.
+	referenceIndex := make(map[string][]entityRef)
+	for _, doc := range graph.Documents {
+		for _, entity := range doc.Entities {
+			if !referenceTargetKind(entity.Type) {
+				continue
+			}
+			r := entityRef{entity: entity, doc: doc.Path}
+			referenceIndex[entity.Name] = append(referenceIndex[entity.Name], r)
+			if i := strings.LastIndex(entity.Name, "."); i >= 0 {
+				referenceIndex[entity.Name[i+1:]] = append(referenceIndex[entity.Name[i+1:]], r)
+			}
 		}
 	}
 
@@ -103,10 +126,12 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 		graph.Links = append(graph.Links, doc.Links...)
 	}
 
-	// 4. Cross-file package indexing: aggregate Go files that declare the
-	// same package and resolve "imports" between indexed directories.
-	// This pass only fires for documents the parser actually tagged with
-	// a "package" entity, so hand-built fixtures stay untouched.
+	// 4. Cross-file package indexing: aggregate every file whose parser
+	// emitted a "package" entity (Go's package clause, Java/Kotlin
+	// package_header, PHP/C# namespaces, Elixir's top-level module) and
+	// lift each file onto its package node with a "part_of" edge.  This
+	// pass only fires for documents the parser actually tagged with a
+	// "package" entity, so hand-built fixtures stay untouched.
 	graph.Packages = make(map[string]*ir.Package)
 
 	// Package dirs are absolute on disk while import statements use
@@ -116,10 +141,7 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 
 	// First pass: group files by the package clause the parser extracted.
 	for _, doc := range graph.Documents {
-		if doc.Format != "golang" {
-			continue
-		}
-		pkgDir, pkgName := goPackageDir(doc)
+		pkgDir, pkgName := packageDir(doc)
 		if pkgDir == "" {
 			continue
 		}
@@ -150,7 +172,7 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 		if doc.Format != "golang" {
 			continue
 		}
-		srcDir, _ := goPackageDir(doc)
+		srcDir, _ := packageDir(doc)
 		srcPkg := graph.Packages[srcDir]
 		for _, entity := range doc.Entities {
 			if entity.Type != "import" {
@@ -180,58 +202,25 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 		}
 	}
 
-	// 4b. Cross-file JS/TS module resolution: map import specifiers emitted
-	// by the JS-family parsers onto indexed files so a JS project gets real
-	// cross-file "imports" edges (the Go pass above does the equivalent via
-	// package dirs). Relative specifiers resolve by exact path with the full
-	// JS-family extension set; bare specifiers use src-root and longest-suffix
-	// matching to cover tsconfig "paths"-style aliases. Specifiers that do
-	// not resolve to an indexed file (e.g. node_modules packages) are left
-	// unlinked rather than emitting dangling edges.
-	jsIndex := make(map[string]string)
-	for docPath, doc := range graph.Documents {
-		if !isJSFamily(doc.Format) {
-			continue
-		}
-		jsIndex[stripJSExt(docPath)] = docPath
-	}
-	for _, doc := range graph.Documents {
-		if !isJSFamily(doc.Format) {
-			continue
-		}
-		for _, entity := range doc.Entities {
-			if entity.Type != "import" {
-				continue
-			}
-			target, exact := resolveJSImport(entity.Name, doc.Path, jsIndex)
-			if target == "" || target == doc.Path {
-				continue
-			}
-			// Exact relative resolution follows documented module semantics
-			// (extension order + index fallback), so it is a parsed fact with
-			// full weight. Alias/suffix matches are heuristics and weigh less.
-			weight := 0.8
-			sourceType := ir.LinkSourceInferred
-			resolution := "suffix_match"
-			if exact {
-				weight = 1.0
-				sourceType = ir.LinkSourceExtracted
-				resolution = "exact"
-			}
-			graph.Links = append(graph.Links, ir.Link{
-				SourceID:   doc.Path,
-				TargetID:   target,
-				Type:       "imports",
-				Weight:     weight,
-				SourceType: sourceType,
-				Metadata: map[string]string{
-					"rule":        "module_resolution",
-					"import_path": entity.Name,
-					"resolution":  resolution,
-				},
-			})
-		}
-	}
+	// 4b. Generic cross-file import resolution: every import entity of a
+	// format with an import shape is resolved onto an indexed document and
+	// lifted as an "imports" edge. Relative/local imports resolve exactly
+	// (extracted); namespace and bare imports match by longest path suffix
+	// (inferred). This single pass serves the JS/TS family, the JVM
+	// languages, Python, Rust, PHP, C#, Ruby, Elixir, Swift, and C/C++,
+	// so the Go package pass above is the only format-specific import
+	// resolution left (Go imports target packages, not files). The
+	// per-document resolution map is retained for the reference pass,
+	// which disambiguates name mentions against the same files.
+	resolvedImports := resolveCrossFileImports(&graph)
+
+	// 4c. Cross-file reference resolution: every "reference" entity
+	// (type/identifier mentions emitted by the Kotlin/Java/Swift/C/C++
+	// walkers) is resolved against the declaration index.  Import-context
+	// disambiguation picks declarations in the files the referencing
+	// document imports; a globally unique name is the fallback; ambiguous
+	// common names without import context are left unlinked.
+	resolveReferences(&graph, resolvedImports, referenceIndex)
 
 	// 5. Enforce the provenance invariant: any link that reached the
 	// final graph without an explicit SourceType (e.g. lifted from a
@@ -259,10 +248,13 @@ func Build(docs []ir.Document) (ir.Graph, error) {
 	return graph, nil
 }
 
-// goPackageDir extracts the package directory and name a document belongs
-// to from the parser-emitted "package" entity. Returns "", "" when the
-// document carries no such entity (e.g. hand-built fixtures).
-func goPackageDir(doc *ir.Document) (string, string) {
+// packageDir extracts the package aggregation key and name a document
+// belongs to from the parser-emitted "package" entity.  The key is the
+// entity's "package_path" metadata: a directory for Go, the package
+// clause for JVM languages, the namespace for PHP/C#, and the top-level
+// module segment for Elixir.  Returns "", "" when the document carries no
+// such entity (e.g. hand-built fixtures).
+func packageDir(doc *ir.Document) (string, string) {
 	for _, entity := range doc.Entities {
 		if entity.Type == "package" {
 			dir := entity.Metadata["package_path"]
@@ -287,7 +279,7 @@ func goPackageRoot(documents map[string]*ir.Document) string {
 		if doc.Format != "golang" {
 			continue
 		}
-		dir, _ := goPackageDir(doc)
+		dir, _ := packageDir(doc)
 		if dir == "" {
 			continue
 		}
@@ -357,88 +349,4 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// jsExtensions are the file suffixes the JS-family import resolver tries, in
-// priority order, when a relative specifier omits one.
-var jsExtensions = []string{
-	".js", ".jsx", ".mjs", ".cjs",
-	".ts", ".tsx", ".mts", ".cts",
-}
-
-// isJSFamily reports whether a format key belongs to the JS/TS family whose
-// parsers emit "import" entities with the raw module specifier as the name.
-func isJSFamily(format string) bool {
-	switch format {
-	case "javascript", "typescript", "tsx":
-		return true
-	}
-	return false
-}
-
-// stripJSExt removes the trailing JS-family extension from a file path,
-// leaving the path in a form that import specifiers can be matched against
-// ("/src/components/App.js" -> "/src/components/App").
-func stripJSExt(p string) string {
-	base := p
-	for _, ext := range jsExtensions {
-		if strings.HasSuffix(p, ext) {
-			base = p[:len(p)-len(ext)]
-			break
-		}
-	}
-	return base
-}
-
-// resolveJSImport maps an import specifier onto an indexed JS-family file.
-// Relative specifiers ("./x", "../y") resolve exactly against the importing
-// file's directory, trying every JS-family extension plus index-file
-// fallbacks; the second return value reports whether that resolution was
-// exact (relative) versus heuristic. Bare/alias specifiers try a "src/" root,
-// the specifier itself, then a longest-suffix match so "components/App"
-// reaches "src/components/App.tsx" without needing tsconfig parsing -- these
-// are heuristic and report exact=false.
-func resolveJSImport(specifier, srcPath string, jsIndex map[string]string) (string, bool) {
-	if specifier == "" {
-		return "", false
-	}
-	if strings.HasPrefix(specifier, "./") || strings.HasPrefix(specifier, "../") {
-		base := path.Join(path.Dir(srcPath), specifier)
-		for _, ext := range jsExtensions {
-			if target, ok := jsIndex[stripJSExt(base+ext)]; ok {
-				return target, true
-			}
-		}
-		for _, ext := range jsExtensions {
-			if target, ok := jsIndex[stripJSExt(path.Join(base, "index"+ext))]; ok {
-				return target, true
-			}
-		}
-		return "", false
-	}
-
-	// Bare/alias specifiers: "@/components/App" and "~/lib/x" are common
-	// tsconfig alias forms -- strip the leading sigil and try the remainder.
-	trimmed := specifier
-	for _, sigil := range []string{"@/", "~/", "#/"} {
-		if strings.HasPrefix(specifier, sigil) {
-			trimmed = strings.TrimPrefix(specifier, sigil)
-			break
-		}
-	}
-	for _, candidate := range []string{path.Join("src", trimmed), trimmed} {
-		if target, ok := jsIndex[stripJSExt(candidate)]; ok {
-			return target, false
-		}
-	}
-	best, bestLen := "", 0
-	for key, target := range jsIndex {
-		if len(key) > bestLen && strings.HasSuffix(key, "/"+trimmed) {
-			best, bestLen = target, len(key)
-		}
-	}
-	if best == "" {
-		return "", false
-	}
-	return best, false
 }
