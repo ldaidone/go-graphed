@@ -226,8 +226,8 @@ func networkAdjacency(graph *ir.Graph) networkGraph {
 // represents for clustering: entity IDs collapse to their owning file and
 // package nodes expand to every indexed member file.
 func clusterDocPaths(graph *ir.Graph, id string) []string {
-	if strings.HasPrefix(id, ir.PackageNodePrefix) {
-		dir := strings.TrimPrefix(id, ir.PackageNodePrefix)
+	if after, ok := strings.CutPrefix(id, ir.PackageNodePrefix); ok {
+		dir := after
 		if pkg, ok := graph.Packages[dir]; ok {
 			return pkg.Files
 		}

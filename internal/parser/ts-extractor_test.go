@@ -3,6 +3,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
@@ -38,12 +39,7 @@ export function f() {}
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["import"], "b") {
@@ -108,12 +104,7 @@ class Second {
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["class"], "Outer") {
@@ -260,12 +251,7 @@ export default Button
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["import"], "react") {
@@ -309,12 +295,7 @@ export const App: React.FC<Props> = () => <div>hi</div>;
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["import"], "react") {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/ldaidone/go-graphed/internal/config"
 	"github.com/ldaidone/go-graphed/internal/ir"
-	"github.com/ldaidone/go-graphed/internal/utils/vector_store"
+	"github.com/ldaidone/goembedx/pkg/store"
 	mcp_golang "github.com/metoro-io/mcp-golang"
 	"github.com/metoro-io/mcp-golang/transport/stdio"
 )
@@ -66,13 +66,13 @@ func TestRegisterTools(t *testing.T) {
 }
 
 func TestClose_ReleasesResourcesAndIsIdempotent(t *testing.T) {
-	store, err := vector_store.NewSQLiteStore(t.TempDir())
+	st, err := store.NewSQLite(t.TempDir())
 	if err != nil {
-		t.Fatalf("NewSQLiteStore returned error: %v", err)
+		t.Fatalf("NewSQLite returned error: %v", err)
 	}
 	embedder := &fakeCloseEmbedder{}
 
-	s := &Server{store: store, embedder: embedder}
+	s := &Server{store: st, embedder: embedder}
 
 	s.Close()
 	if s.store != nil {

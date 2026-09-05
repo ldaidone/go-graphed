@@ -137,10 +137,7 @@ func flagHubs(metrics *ir.Metrics) int {
 		return candidates[i].path < candidates[j].path
 	})
 
-	count := int(math.Ceil(float64(len(metrics.Documents)) * hubFraction))
-	if count > len(candidates) {
-		count = len(candidates)
-	}
+	count := min(int(math.Ceil(float64(len(metrics.Documents))*hubFraction)), len(candidates))
 	for _, c := range candidates[:count] {
 		dm := metrics.Documents[c.path]
 		dm.IsHub = true
@@ -184,7 +181,7 @@ func pagerank(adj networkGraph) map[string]float64 {
 		rank[i] = 1.0 / float64(n)
 	}
 
-	for iter := 0; iter < pagerankIterations; iter++ {
+	for range pagerankIterations {
 		next := make([]float64, n)
 		for i, node := range nodes {
 			if out[i] == 0 {

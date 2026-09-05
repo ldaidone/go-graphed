@@ -15,7 +15,7 @@ import (
 func makeGoTree(t testing.TB, n int) string {
 	t.Helper()
 	root := t.TempDir()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		src := fmt.Sprintf(`// Package p%d is a benchmark fixture.
 package p%d
 

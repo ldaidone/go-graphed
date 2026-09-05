@@ -305,7 +305,7 @@ func TestClusterByNetwork_Deterministic(t *testing.T) {
 	}
 
 	first := clusterByNetwork(graph)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		again := clusterByNetwork(graph)
 		if !reflect.DeepEqual(first, again) {
 			t.Fatalf("clusterByNetwork is not deterministic:\nfirst: %+v\nagain: %+v", first, again)

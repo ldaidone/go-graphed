@@ -7,6 +7,7 @@ package analyzer
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -343,10 +344,5 @@ func resolveImportDir(importPath string, packages map[string]*ir.Package, root s
 
 // containsString reports whether s is present in list.
 func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }

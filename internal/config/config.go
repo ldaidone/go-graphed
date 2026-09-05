@@ -12,6 +12,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -196,9 +197,7 @@ func UserConfigDir() string {
 // GRAPHEAD_* environment variable names.
 func loadFromFile() map[string]string {
 	values := configFileValues()
-	for k, v := range envFileValues() {
-		values[k] = v
-	}
+	maps.Copy(values, envFileValues())
 	return values
 }
 

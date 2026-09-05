@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"path"
+	"slices"
 	"sort"
 	"strings"
 
@@ -220,8 +221,8 @@ func snakeAll(segs []string) []string {
 func (idx *fileIndex) resolveNamespace(name string, shape importShape) string {
 	raw := name
 	for _, sigil := range shape.sigils {
-		if strings.HasPrefix(raw, sigil) {
-			raw = strings.TrimPrefix(raw, sigil)
+		if after, ok := strings.CutPrefix(raw, sigil); ok {
+			raw = after
 			break
 		}
 	}
@@ -240,7 +241,7 @@ func (idx *fileIndex) resolveNamespace(name string, shape importShape) string {
 	}
 
 	for _, list := range lists {
-		for i := 0; i < len(list); i++ {
+		for i := range list {
 			if shape.snake {
 				if t := idx.tryCandidate(path.Join(snakeAll(list[i:])...), shape); t != "" {
 					return t
@@ -279,12 +280,7 @@ func (idx *fileIndex) resolveLocalInclude(name string, shape importShape) string
 
 // extIn reports whether ext is present in exts.
 func extIn(ext string, exts []string) bool {
-	for _, e := range exts {
-		if e == ext {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(exts, ext)
 }
 
 // resolveCrossFileImports is the generic cross-file import pass: every

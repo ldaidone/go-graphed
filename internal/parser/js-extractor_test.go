@@ -3,6 +3,7 @@ package parser
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,12 +87,7 @@ export function world() { return 'world' }
 
 	// Functions should be extracted.
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 	if !contains(byType["function"], "hello") {
 		t.Errorf("expected function hello, got %v", byType)
@@ -241,12 +237,7 @@ class A { m() { return foo(); } }
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["import"], "y") {
@@ -334,12 +325,7 @@ var z = [1, 2, 3];
 	}
 
 	contains := func(slice []string, s string) bool {
-		for _, v := range slice {
-			if v == s {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(slice, s)
 	}
 
 	if !contains(byType["variable"], "x") {

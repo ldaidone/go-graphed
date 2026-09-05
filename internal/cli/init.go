@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -229,7 +230,7 @@ func resolveTargets(targets []string, all bool, dir string) ([]string, error) {
 	var flat []string
 	if len(targets) > 0 {
 		for _, t := range targets {
-			for _, part := range strings.Split(t, ",") {
+			for part := range strings.SplitSeq(t, ",") {
 				if name := strings.TrimSpace(part); name != "" {
 					flat = append(flat, name)
 				}
@@ -309,12 +310,7 @@ func pathExists(dir, rel string) bool {
 }
 
 func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, want)
 }
 
 // sectionNameFor returns the target name whose MCP wiring note should be

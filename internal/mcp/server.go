@@ -3,13 +3,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/ldaidone/go-graphed/internal/analyzer"
 	"github.com/ldaidone/go-graphed/internal/config"
 	"github.com/ldaidone/go-graphed/internal/ir"
-	"github.com/ldaidone/go-graphed/internal/utils/vector_store"
 	"github.com/ldaidone/goembedx/pkg/embedx"
-	"os"
-
+	"github.com/ldaidone/goembedx/pkg/store"
 	"github.com/metoro-io/mcp-golang"
 	"github.com/metoro-io/mcp-golang/transport/stdio"
 )
@@ -43,9 +43,9 @@ type Options struct {
 type Server struct {
 	metoroServer *mcp_golang.Server
 	graph        *ir.Graph
-	embedEngine  *embedx.Embedder   // Wraps the persistent vector store
-	embedder     TextEmbedder       // Native pure-Go embedder wrapper
-	store        vector_store.Store // Kept alive for the server's lifetime
+	searcher     embedx.Searcher // Semantic retrieval over the vector store
+	embedder     TextEmbedder    // Native pure-Go embedder wrapper
+	store        *store.SQLite   // Kept alive for the server's lifetime
 }
 
 // NewServer builds an instance of the MCP protocol controller bound to the
@@ -60,7 +60,7 @@ func NewServer(graph *ir.Graph, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("failed to determine database path: %w", err)
 	}
 
-	store, err := vector_store.NewSQLiteStore(dbPath)
+	st, err := store.NewSQLite(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize vector store: %w", err)
 	}
@@ -68,7 +68,7 @@ func NewServer(graph *ir.Graph, opts Options) (*Server, error) {
 	modelPath := config.ResolveModelPath(opts.ModelPath)
 	if modelPath == "" {
 		// Close the store we just opened so we don't leak file handles on failure.
-		_ = store.Close()
+		_ = st.Close()
 		return nil, fmt.Errorf("no embedding model resolved: set --model-path or GRAPHEAD_MODEL_PATH")
 	}
 
@@ -76,16 +76,16 @@ func NewServer(graph *ir.Graph, opts Options) (*Server, error) {
 	embedder, err := analyzer.NewNativeEmbedder(ctx, modelPath)
 	if err != nil {
 		// Close the store we just opened so we don't leak file handles on failure.
-		_ = store.Close()
+		_ = st.Close()
 		return nil, fmt.Errorf("failed to load native semantic embedding engine: %w", err)
 	}
 
 	return &Server{
 		metoroServer: mcp_golang.NewServer(transport),
 		graph:        graph,
-		embedEngine:  embedx.New(store),
+		searcher:     st,
 		embedder:     embedder,
-		store:        store,
+		store:        st,
 	}, nil
 }
 
