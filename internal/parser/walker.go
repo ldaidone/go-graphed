@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
@@ -491,12 +492,7 @@ func (w *Walker) isRefNode(n *sitter.Node) bool {
 		return false
 	}
 	typ := n.Type(w.lang())
-	for _, t := range w.cfg.RefNodeTypes {
-		if t == typ {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(w.cfg.RefNodeTypes, typ)
 }
 
 // emitReference emits a "reference" entity for an identifier mention.  The

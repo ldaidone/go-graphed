@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -213,12 +214,12 @@ func (s *Server) registerTools() error {
 
 func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.ToolResponse, error) {
 	var err error
-	var matches []embedx.Result
+	var matches []embedx.SearchResult
 
 	if s.graph == nil {
 		return nil, fmt.Errorf("graph layer state is uninitialized")
 	}
-	if s.embedEngine == nil || s.embedder == nil {
+	if s.searcher == nil || s.embedder == nil {
 		return nil, fmt.Errorf("semantic search engine vector indices are uninitialized")
 	}
 
@@ -314,11 +315,8 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 	// We request up to len(topologicalPaths)*2 results to cover docs and internal
 	// entities, floored at minSemanticSearchResults so a sparse topology frontier
 	// (few cross-file edges) never starves the semantic pass to ~0 candidates.
-	candidates := len(topologicalPaths) * 2
-	if candidates < minSemanticSearchResults {
-		candidates = minSemanticSearchResults
-	}
-	matches, err = s.embedEngine.Search(queryVector, candidates)
+	candidates := max(len(topologicalPaths)*2, minSemanticSearchResults)
+	matches, err = s.searcher.SearchContext(ctx, queryVector, embedx.WithK(candidates))
 	if err != nil {
 		return nil, fmt.Errorf("vector database query retrieval failed: %w", err)
 	}
@@ -329,7 +327,7 @@ func (s *Server) handleGetNarrowedContext(args NarrowContextArgs) (*mcp_golang.T
 	for _, match := range matches {
 		if match.Score >= args.MinScore {
 			// Extract clean root file path from Entity ID strings if necessary
-			cleanPath := strings.Split(match.ID, "#")[0]
+			cleanPath, _, _ := strings.Cut(match.ID, "#")
 
 			// Keep the highest similarity score if multiple entities match within the same file
 			if existingScore, exists := semanticMatches[cleanPath]; !exists || match.Score > existingScore {
@@ -540,8 +538,8 @@ func (s *Server) renderNarrowedJSON(args NarrowContextArgs, results []contextRes
 // represents. Document and entity IDs map to their owning file; package
 // nodes expand to every indexed member file.
 func (s *Server) nodePaths(id string) []string {
-	if strings.HasPrefix(id, ir.PackageNodePrefix) {
-		dir := strings.TrimPrefix(id, ir.PackageNodePrefix)
+	if after, ok := strings.CutPrefix(id, ir.PackageNodePrefix); ok {
+		dir := after
 		if pkg, ok := s.graph.Packages[dir]; ok {
 			return pkg.Files
 		}
@@ -552,12 +550,7 @@ func (s *Server) nodePaths(id string) []string {
 
 // containsPath reports whether path is present in files.
 func containsPath(files []string, path string) bool {
-	for _, f := range files {
-		if f == path {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(files, path)
 }
 
 // excludedPath reports whether a file path matches any exclusion pattern.
@@ -750,11 +743,8 @@ func (s *Server) handleGetDocumentDetails(args DocumentQueryArgs) (*mcp_golang.T
 	// higher-level subsystems it participates in.
 	var memberClusters []string
 	for _, c := range s.graph.Clusters {
-		for _, m := range c.Members {
-			if m == doc.Path {
-				memberClusters = append(memberClusters, c.ID)
-				break
-			}
+		if slices.Contains(c.Members, doc.Path) {
+			memberClusters = append(memberClusters, c.ID)
 		}
 	}
 	if len(memberClusters) > 0 {

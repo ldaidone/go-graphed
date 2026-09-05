@@ -133,7 +133,7 @@ func TestBuild_InvalidModelPathReturnsError(t *testing.T) {
 
 func TestBuild_WithConcurrentJobs(t *testing.T) {
 	tmp := t.TempDir()
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		content := "package p" + string(rune('a'+i)) + "\n\ntype T" + string(rune('A'+i)) + " struct{}\n"
 		if err := os.WriteFile(filepath.Join(tmp, "file_"+string(rune('a'+i))+".go"), []byte(content), 0644); err != nil {
 			t.Fatal(err)

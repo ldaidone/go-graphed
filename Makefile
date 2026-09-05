@@ -1,7 +1,10 @@
-.PHONY: all build run run-build run-mcp test test-race coverage vet tidy clean help
-
 BINARY=kg
 OUTPUT_DIR=.
+BANNER := ./scripts/ascii-banner
+
+.DEFAULT_GOAL := help
+
+.PHONY: all build run run-build run-mcp test test-race coverage vet tidy clean help
 
 all: build
 
@@ -36,14 +39,14 @@ tidy:
 clean:
 	rm -f $(OUTPUT_DIR)/$(BINARY) coverage.out
 
+install-banner:
+	@echo "🔗 Installing ascii-banner to $(HOME)/.local/bin..."
+	mkdir -p $(HOME)/.local/bin
+	install -m 755 $(BANNER) $(HOME)/.local/bin/ascii-banner
+
 help:
 	@echo ""
-	@echo "  ██████╗ ██████╗  █████╗ ██████  ██╗   ██╗███████╗████████╗"
-	@echo " ██╔════╝ ██╔══██╗██╔══██╗██╔══██╗██║   ██║██╔════╝██╔════██"
-	@echo " ██║  ███╗██████╔╝███████║██████═╝████████║█████╗  ██║    ██"
-	@echo " ██║   ██║██╔══██╗██╔══██║██║     ██╔═══██║██╔══╝  ██║    ██"
-	@echo " ╚██████╔╝██║  ██║██║  ██║██║     ██║   ██║███████╗████████╝"
-	@echo "  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝   ╚═╝╚══════╝╚══════╝"
+	@$(BANNER) -c magenta "GRAPHED"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

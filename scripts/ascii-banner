@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+#
+# ascii-banner — print text as 5x7 3D-Shadow ASCII art, with optional
+# colorization: solid color, per-letter, or a rainbow across letters.
+#
+# Two ways to use it:
+#
+#   1. Standalone (needs to be executable and on PATH):
+#        ascii-banner "EMBEDX" --rainbow
+#
+#   2. Sourced as a function:
+#        source ascii-banner
+#        ascii_banner "EMBEDX" --color cyan
+#
+# Usage:
+#   ascii-banner [options] "TEXT"
+
+color_code() {
+	case "$1" in
+	black) echo 30 ;;
+	red) echo 31 ;;
+	green) echo 32 ;;
+	yellow) echo 33 ;;
+	blue) echo 34 ;;
+	magenta) echo 35 ;;
+	cyan) echo 36 ;;
+	white) echo 37 ;;
+	bright-black) echo 90 ;;
+	bright-red) echo 91 ;;
+	bright-green) echo 92 ;;
+	bright-yellow) echo 93 ;;
+	bright-blue) echo 94 ;;
+	bright-magenta) echo 95 ;;
+	bright-cyan) echo 96 ;;
+	bright-white) echo 97 ;;
+	*) echo "$1" ;;
+	esac
+}
+
+RAINBOW=(bright-red bright-yellow bright-green bright-cyan bright-blue bright-magenta)
+
+# glyph prints a 6-row, 7-column block with a 3D drop-shadow (▒)
+glyph() {
+	case "$1" in
+	A) printf '%s' $' ████▒ \n█▒   █▒\n█▒   █▒\n██████▒\n█▒   █▒' ;;
+	B) printf '%s' $'█████▒ \n█▒   █▒\n█████▒ \n█▒   █▒\n█████▒ ' ;;
+	C) printf '%s' $' █████▒\n█▒     \n█▒     \n█▒     \n █████▒' ;;
+	D) printf '%s' $'█████  \n█▒▒▒▒█▒\n█▒   █▒\n█▒   █▒\n█████▒ ' ;;
+	E) printf '%s' $'██████▒\n█▒     \n████▒  \n█▒     \n██████▒' ;;
+	F) printf '%s' $'██████▒\n█▒     \n████▒  \n█▒     \n█▒     ' ;;
+	G) printf '%s' $' █████▒\n█▒     \n█▒ ███▒\n█▒   █▒\n █████▒' ;;
+	H) printf '%s' $'█▒   █▒\n█▒   █▒\n██████▒\n█▒   █▒\n█▒   █▒' ;;
+	I) printf '%s' $'██████▒\n  ██▒  \n  ██▒  \n  ██▒  \n██████▒' ;;
+	J) printf '%s' $'  ████▒\n    ██▒\n    ██▒\n█▒  ██▒\n ████▒ ' ;;
+	K) printf '%s' $'█▒  ██▒\n█▒ ██▒ \n████▒  \n█▒ ██▒ \n█▒  ██▒' ;;
+	L) printf '%s' $'█▒     \n█▒     \n█▒     \n█▒     \n██████▒' ;;
+	M) printf '%s' $'█▒   █▒\n██▒ ██▒\n█▒██ █▒\n█▒   █▒\n█▒   █▒' ;;
+	N) printf '%s' $'█▒   █▒\n██▒  █▒\n█▒█▒ █▒\n█▒ █▒█▒\n█▒  ██▒' ;;
+	O) printf '%s' $' ████▒ \n█▒   █▒\n█▒   █▒\n█▒   █▒\n ████▒ ' ;;
+	P) printf '%s' $'█████▒ \n█▒   █▒\n█████▒ \n█▒     \n█▒     ' ;;
+	Q) printf '%s' $' ████▒ \n█▒   █▒\n█▒   █▒\n█▒ █▒█▒\n ████▒ ' ;;
+	R) printf '%s' $'█████▒ \n█▒   █▒\n█████▒ \n█▒  █▒ \n█▒   █▒' ;;
+	S) printf '%s' $' █████▒\n█▒     \n ████▒ \n     █▒\n█████▒ ' ;;
+	T) printf '%s' $'██████▒ \n  ██▒  \n  ██▒  \n  ██▒  \n  ██▒  ' ;;
+	U) printf '%s' $'█▒   █▒\n█▒   █▒\n█▒   █▒\n█▒   █▒\n ████▒ ' ;;
+	V) printf '%s' $'█▒   █▒\n█▒   █▒\n█▒   █▒\n █▒ █▒ \n  ██▒  ' ;;
+	W) printf '%s' $'█▒   █▒\n█▒   █▒\n█▒██▒█▒\n██▒ ██▒\n█▒   █▒' ;;
+	X) printf '%s' $'█▒   █▒\n █▒ █▒ \n  ██▒  \n █▒ █▒ \n█▒   █▒' ;;
+	Y) printf '%s' $'█▒   █▒\n█▒   █▒\n ████▒ \n  ██▒  \n  ██▒  ' ;;
+	Z) printf '%s' $'██████▒\n   ██▒ \n  ██▒  \n ██▒   \n██████▒' ;;
+	0) printf '%s' $' ████▒ \n█▒  ██▒\n█▒█▒ █▒\n██▒  █▒\n ████▒ ' ;;
+	1) printf '%s' $'  ██▒  \n ███▒  \n  ██▒  \n  ██▒  \n██████▒' ;;
+	2) printf '%s' $' ████▒ \n█▒   █▒\n   ██▒ \n ██▒   \n██████▒' ;;
+	3) printf '%s' $'██████▒\n    ██▒\n  ███▒ \n    ██▒\n██████▒' ;;
+	4) printf '%s' $'█▒  ██▒\n█▒  ██▒\n██████▒\n    ██▒\n    ██▒' ;;
+	5) printf '%s' $'██████▒\n█▒     \n█████▒ \n     █▒\n█████▒ ' ;;
+	6) printf '%s' $' ████▒ \n█▒     \n█████▒ \n█▒   █▒\n ████▒ ' ;;
+	7) printf '%s' $'██████▒\n    ██▒\n   ██▒ \n  ██▒  \n  ██▒  ' ;;
+	8) printf '%s' $' ████▒ \n█▒   █▒\n ████▒ \n█▒   █▒\n ████▒ ' ;;
+	9) printf '%s' $' ████▒ \n█▒   █▒\n █████▒\n     █▒\n ████▒ ' ;;
+	*) printf '%s' $'       \n       \n       \n       \n       ' ;;
+	esac
+}
+
+usage() {
+	cat <<'EOF'
+ascii-banner — print text as 6x7 3D-Shadow ASCII art
+
+Usage:
+  ascii-banner [options] "TEXT"
+
+Options:
+  -c, --color NAME|SGR   color the whole text (e.g. cyan, bright-blue, or a
+                         raw SGR sequence like 38;5;208)
+  -l, --letter LIST      color each letter, cycling a comma-separated list
+                         (e.g. red,green,blue)
+  -r, --rainbow          rainbow gradient across letters
+  --no-color             force plain output (also honors $NO_COLOR)
+  -h, --help             show this help
+
+Also sourceable to expose the ascii_banner() function.
+EOF
+}
+
+ascii_banner() {
+	local mode=plain
+	local color=""
+	local -a letters=()
+
+	# parse options anywhere on the command line
+	local -a pos=()
+	while (($# > 0)); do
+		case "$1" in
+		-h | --help)
+			usage
+			return 0
+			;;
+		-c | --color)
+			shift
+			mode=solid
+			color="$(color_code "$1")"
+			shift
+			;;
+		-l | --letter)
+			shift
+			mode=letter
+			letters=()
+			local rest="$1"
+			while [ -n "$rest" ]; do
+				local one="${rest%%,*}"
+				letters+=("$(color_code "$one")")
+				if [ "$one" = "$rest" ]; then rest=""; else rest="${rest#*,}"; fi
+			done
+			shift
+			;;
+		-r | --rainbow)
+			mode=rainbow
+			shift
+			;;
+		--no-color)
+			mode=plain
+			shift
+			;;
+		--)
+			shift
+			pos+=("$@")
+			break
+			;;
+		-*)
+			echo "ascii-banner: unknown option: $1" >&2
+			usage >&2
+			return 2
+			;;
+		*)
+			pos+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	# NO_COLOR is the standard escape hatch for color-free output.
+	[ -n "${NO_COLOR:-}" ] && mode=plain
+
+	local text="${pos[*]}"
+	local n=${#text}
+	if ((n == 0)); then
+		echo "ascii-banner: no text given" >&2
+		usage >&2
+		return 1
+	fi
+
+	# per-letter SGR codes for letter / rainbow modes
+	local -a colors=()
+	local i r
+	if [ "$mode" = rainbow ]; then
+		for ((i = 0; i < n; i++)); do
+			colors[i]="$(color_code "${RAINBOW[$((i % ${#RAINBOW[@]}))]}")"
+		done
+	elif [ "$mode" = letter ]; then
+		for ((i = 0; i < n; i++)); do
+			colors[i]="${letters[$((i % ${#letters[@]}))]}"
+		done
+	fi
+
+	# assemble 6 rows for 6x7 matrix font
+	local -a plain_rows=() color_rows=()
+	local txt
+	txt=$(echo "$text" | tr '[:lower:]' '[:upper:]')
+	for ((i = 0; i < n; i++)); do
+		local ch="${txt:i:1}"
+		local g
+		g="$(glyph "$ch")"
+		local -a lines=()
+		while IFS= read -r ln; do lines+=("$ln"); done <<<"$g"
+		local h=${#lines[@]}
+		local w=${#lines[0]}
+		((w == 0)) && w=7
+		local cc=""
+		[ "$mode" = letter ] || [ "$mode" = rainbow ] && cc="${colors[$i]:-}"
+		for ((r = 0; r < 6; r++)); do
+			local seg=""
+			if ((r < h)); then
+				seg="${lines[$r]}"
+			else
+				printf -v seg '%*s' "$w" ""
+			fi
+			# a literal space keeps a visible gap between words
+			[ "$ch" = " " ] && seg="       "
+			if ((i > 0)); then plain_rows[r]+=" "; fi
+			plain_rows[r]+="$seg"
+			if [ -n "$cc" ]; then
+				if ((i > 0)); then color_rows[r]+=" "; fi
+				color_rows[r]+="$(printf '\033[%sm' "$cc")$seg$(printf '\033[0m')"
+			else
+				color_rows[r]+="$seg"
+			fi
+		done
+	done
+
+	for ((r = 0; r < 6; r++)); do
+		local prow="${plain_rows[$r]:-}"
+		[ -z "${prow//[[:space:]]/}" ] && continue
+		if [ "$mode" = solid ]; then
+			printf '\033[%sm%s\033[0m\n' "$color" "$prow"
+		elif [ "$mode" = letter ] || [ "$mode" = rainbow ]; then
+			printf '%s\n' "${color_rows[$r]}"
+		else
+			printf '%s\n' "$prow"
+		fi
+	done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	set -euo pipefail
+	trap 'exit 0' PIPE
+	ascii_banner "$@"
+fi

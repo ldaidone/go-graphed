@@ -160,7 +160,7 @@ func TestAnnotateMetrics_Deterministic(t *testing.T) {
 	graph := starGraph()
 	first := &ir.Graph{Documents: graph.Documents, Links: graph.Links}
 	annotateMetrics(first)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		again := &ir.Graph{
 			Documents: map[string]*ir.Document{
 				"hub.go": {Path: "hub.go", Metadata: map[string]string{}},

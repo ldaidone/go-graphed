@@ -3,6 +3,7 @@
 Language-agnostic knowledge graph generator for source code.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![GoDoc](https://godoc.org/github.com/ldaidone/gomemo?status.svg)](https://pkg.go.dev/github.com/ldaidone/go-graphed)
 [![GitHub stars](https://img.shields.io/github/stars/ldaidone/go-graphed.svg)](https://github.com/ldaidone/go-graphed/stargazers)
 ![Beta](https://img.shields.io/badge/status-beta-yellow)
 
@@ -355,7 +356,7 @@ func main() {
 - **Exporter** (`internal/exporter/`): Serializes the IR graph to a concrete output format. `JSON` writes graph.json; `HTML` renders a self-contained, dependency-free interactive visualizer (force layout, pan/zoom, filtering, per-node detail panel); `Report` writes a markdown summary mirroring the `kg metrics` and `kg clusters` terminal views. Other formats can be added as separate files.
 - **IR** (`internal/ir/`): Shared intermediate representation (`Graph`, `Document`, `Entity`, `Link`, `Package`, `Cluster`, `Metrics`) that all pipeline stages agree on. Links carry a provenance tag (`extracted` vs `inferred`); documents can be flagged as hubs (`is_hub`).
 - **MCP** (`internal/mcp/`): The MCP server used by `kg mcp`, exposing the graph as JSON-RPC tools over stdio, including the hybrid topological + semantic `get_narrowed_context` tool backed by the vector store.
-- **Vector store** (`internal/utils/vector_store/`): SQLite-backed store (WAL mode, safe for multiple concurrent MCP servers) for the document/entity embeddings produced at build time when a model is configured. Rebuilds are incremental: unchanged payloads are skipped via stored hashes and stale vectors are pruned.
+- **Vector store**: SQLite-backed store (WAL mode, safe for multiple concurrent MCP servers) for the document/entity embeddings produced at build time when a model is configured. The backend is sourced from the `goembedx/pkg/store` factory (`store.NewSQLite`) rather than a local implementation, and searches go through the module's `embedx.Searcher` interface. Rebuilds are incremental: unchanged payloads are skipped via stored hashes and stale vectors are pruned.
 
 ### Supported Languages
 

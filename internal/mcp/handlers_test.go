@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,7 +261,7 @@ func TestHandleGetNarrowedContext_HappyPath(t *testing.T) {
 
 	// Seed the semantic index: the entry file is highly similar to the query,
 	// the topologically adjacent file is orthogonal and must be pruned by the min score.
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("failed to seed entry vector: %v", err)
 	}
@@ -278,8 +279,8 @@ func TestHandleGetNarrowedContext_HappyPath(t *testing.T) {
 				{SourceID: entry, TargetID: neighbor, Type: "references", Weight: 1.0},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -307,7 +308,7 @@ func TestHandleGetNarrowedContext_HappyPath(t *testing.T) {
 func TestHandleGetNarrowedContext_DefaultsApplied(t *testing.T) {
 	const entry = "internal/parser/go-extractor.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatalf("failed to seed entry vector: %v", err)
 	}
@@ -319,8 +320,8 @@ func TestHandleGetNarrowedContext_DefaultsApplied(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	// Zero values for MaxHops/MinScore must default to 1 and 0.65 respectively.
@@ -340,7 +341,7 @@ func TestHandleGetNarrowedContext_DirectoryEntryExpandsToMembers(t *testing.T) {
 	// A directory entry must expand to every indexed file beneath it, and
 	// those member files survive the semantic filter even when they score
 	// below the min bound (mirroring the single-file entry guarantee).
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add("src/index.js", []float32{1, 0, 0}); err != nil {
 		t.Fatalf("failed to seed entry vector: %v", err)
 	}
@@ -360,8 +361,8 @@ func TestHandleGetNarrowedContext_DirectoryEntryExpandsToMembers(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -391,8 +392,8 @@ func TestHandleGetNarrowedContext_UnknownEntryReturnsError(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: embedx.New(embedx.NewMemoryStore()),
-		embedder:    &fakeEmbedder{},
+		searcher: newEmbedderSearcher(),
+		embedder: &fakeEmbedder{},
 	}
 
 	_, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -422,6 +423,34 @@ func (f *failingVectorStore) GetAllVectors() (map[string][]float32, error) {
 
 func (f *failingVectorStore) Close() error { return nil }
 
+// embedderSearcher adapts the legacy embedx.Embedder to the embedx.Searcher
+// contract the Server now uses. It lets tests keep seeding vectors through the
+// familiar two-argument Embedder.Add while the handler drives retrieval via
+// SearchContext (WithK).
+type embedderSearcher struct {
+	*embedx.Embedder
+}
+
+func (e embedderSearcher) SearchContext(ctx context.Context, query []float32, opts ...embedx.SearchOption) ([]embedx.SearchResult, error) {
+	cfg := embedx.NewSearchConfig(opts...)
+	results, err := e.Embedder.Search(query, math.MaxInt32)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]embedx.SearchResult, 0, len(results))
+	for _, r := range results {
+		out = append(out, embedx.SearchResult{ID: r.ID, Score: r.Score})
+	}
+	if cfg.K > 0 && len(out) > cfg.K {
+		out = out[:cfg.K]
+	}
+	return out, nil
+}
+
+func newEmbedderSearcher() embedderSearcher {
+	return embedderSearcher{Embedder: embedx.New(embedx.NewMemoryStore())}
+}
+
 // errEmbedder is a TextEmbedder whose EmbedText always fails.
 type errEmbedder struct{}
 
@@ -437,8 +466,8 @@ func TestHandleGetNarrowedContext_EmbedTextError(t *testing.T) {
 			Documents: map[string]*ir.Document{"a.go": {Path: "a.go"}},
 			Links:     []ir.Link{},
 		},
-		embedEngine: embedx.New(embedx.NewMemoryStore()),
-		embedder:    &errEmbedder{},
+		searcher: newEmbedderSearcher(),
+		embedder: &errEmbedder{},
 	}
 
 	_, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -456,8 +485,8 @@ func TestHandleGetNarrowedContext_SearchError(t *testing.T) {
 			Documents: map[string]*ir.Document{"a.go": {Path: "a.go"}},
 			Links:     []ir.Link{},
 		},
-		embedEngine: embedx.New(&failingVectorStore{}),
-		embedder:    &fakeEmbedder{},
+		searcher: embedderSearcher{Embedder: embedx.New(&failingVectorStore{})},
+		embedder: &fakeEmbedder{},
 	}
 
 	_, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -473,7 +502,7 @@ func TestHandleGetNarrowedContext_SkipsLowWeightLinks(t *testing.T) {
 	const entry = "internal/parser/go-extractor.go"
 	const neighbor = "internal/parser/parser.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	// Both files score 1.0 against the query; only topology decides here.
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
@@ -492,8 +521,8 @@ func TestHandleGetNarrowedContext_SkipsLowWeightLinks(t *testing.T) {
 				{SourceID: entry, TargetID: neighbor, Type: "references", Weight: 0.4},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -514,7 +543,7 @@ func TestHandleGetNarrowedContext_TraversesEntityAnchoredLinks(t *testing.T) {
 	const entry = "internal/parser/go-extractor.go"
 	const neighbor = "internal/parser/parser.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -533,8 +562,8 @@ func TestHandleGetNarrowedContext_TraversesEntityAnchoredLinks(t *testing.T) {
 				{SourceID: entry + "#extractGoData", TargetID: neighbor, Type: "calls", Weight: 1.0},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -556,7 +585,7 @@ func TestHandleGetNarrowedContext_FiltersBySourceType(t *testing.T) {
 	const extractedNeighbor = "internal/parser/parser.go"
 	const inferredNeighbor = "docs/GoExtractor.md"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	// All three files score 1.0 against the query; only topology decides here.
 	for _, id := range []string{entry, extractedNeighbor, inferredNeighbor} {
 		if err := engine.Add(id, []float32{1, 0, 0}); err != nil {
@@ -576,8 +605,8 @@ func TestHandleGetNarrowedContext_FiltersBySourceType(t *testing.T) {
 				{SourceID: inferredNeighbor, TargetID: entry, Type: "documents", Weight: 0.6, SourceType: ir.LinkSourceInferred},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	t.Run("extracted only", func(t *testing.T) {
@@ -630,8 +659,8 @@ func TestHandleGetNarrowedContext_FiltersBySourceType(t *testing.T) {
 					{SourceID: entry, TargetID: extractedNeighbor, Type: "calls", Weight: 1.0},
 				},
 			},
-			embedEngine: engine,
-			embedder:    &fakeEmbedder{},
+			searcher: engine,
+			embedder: &fakeEmbedder{},
 		}
 		resp, err := legacy.handleGetNarrowedContext(NarrowContextArgs{
 			EntryPath:   entry,
@@ -652,7 +681,7 @@ func TestHandleGetNarrowedContext_FiltersBySourceType(t *testing.T) {
 func TestHandleGetNarrowedContext_FileReadFailure(t *testing.T) {
 	const entry = "nonexistent/doc.go" // present in the graph but not on disk
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -664,8 +693,8 @@ func TestHandleGetNarrowedContext_FileReadFailure(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -685,7 +714,7 @@ func TestHandleGetNarrowedContext_FileReadFailure(t *testing.T) {
 func TestHandleGetNarrowedContext_NoResults(t *testing.T) {
 	const entry = "ghost.go" // a real indexed document, excluded below
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -701,8 +730,8 @@ func TestHandleGetNarrowedContext_NoResults(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	// Excluding the entry itself (the only file in its frontier) must still
@@ -972,7 +1001,7 @@ func TestHandleGetNarrowedContext_ExcludesPaths(t *testing.T) {
 	const excluded = "vendor/dep.go"
 	const kept = "internal/parser/parser.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	for _, id := range []string{entry, excluded, kept} {
 		if err := engine.Add(id, []float32{1, 0, 0}); err != nil {
 			t.Fatal(err)
@@ -991,8 +1020,8 @@ func TestHandleGetNarrowedContext_ExcludesPaths(t *testing.T) {
 				{SourceID: entry, TargetID: kept, Type: "calls", Weight: 1.0, SourceType: ir.LinkSourceExtracted},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1033,7 +1062,7 @@ func (w *Widget) GetID() string { return w.ID }
 		t.Fatal(err)
 	}
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(path, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1051,8 +1080,8 @@ func (w *Widget) GetID() string { return w.ID }
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1083,7 +1112,7 @@ func TestHandleGetNarrowedContext_TokenBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(path, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1095,8 +1124,8 @@ func TestHandleGetNarrowedContext_TokenBudget(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1125,7 +1154,7 @@ func TestHandleGetNarrowedContext_JSONFormat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(path, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1137,8 +1166,8 @@ func TestHandleGetNarrowedContext_JSONFormat(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1174,7 +1203,7 @@ func TestHandleGetNarrowedContext_PackageExpansion(t *testing.T) {
 	const sibling = "internal/ir/helpers.go"
 	const dep = "internal/analyzer/analyzer.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	for _, id := range []string{entry, sibling, dep} {
 		if err := engine.Add(id, []float32{1, 0, 0}); err != nil {
 			t.Fatal(err)
@@ -1197,8 +1226,8 @@ func TestHandleGetNarrowedContext_PackageExpansion(t *testing.T) {
 				"internal/analyzer": {Name: "analyzer", Path: "internal/analyzer", Files: []string{dep}},
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1228,7 +1257,7 @@ func TestHandleGetNarrowedContext_StalenessNote(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(path, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1241,8 +1270,8 @@ func TestHandleGetNarrowedContext_StalenessNote(t *testing.T) {
 			Links:   []ir.Link{},
 			BuiltAt: time.Now().Add(-time.Hour),
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1513,7 +1542,7 @@ func TestHandleGetDocumentDetails_NonHubMetrics(t *testing.T) {
 func TestHandleGetNarrowedContext_HubMarker(t *testing.T) {
 	const entry = "hub.go"
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1531,8 +1560,8 @@ func TestHandleGetNarrowedContext_HubMarker(t *testing.T) {
 				HubCount: 1,
 			},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	resp, err := s.handleGetNarrowedContext(NarrowContextArgs{
@@ -1614,7 +1643,7 @@ func TestHandleGetNarrowedContext_ImportsDoNotStarveBudget(t *testing.T) {
 		{ID: entry + "#function:OrderService.publish", Type: "function", Name: "OrderService.publish", Metadata: map[string]string{"start_line": "8", "end_line": "10"}},
 	}
 
-	engine := embedx.New(embedx.NewMemoryStore())
+	engine := newEmbedderSearcher()
 	if err := engine.Add(entry, []float32{1, 0, 0}); err != nil {
 		t.Fatal(err)
 	}
@@ -1626,8 +1655,8 @@ func TestHandleGetNarrowedContext_ImportsDoNotStarveBudget(t *testing.T) {
 			},
 			Links: []ir.Link{},
 		},
-		embedEngine: engine,
-		embedder:    &fakeEmbedder{},
+		searcher: engine,
+		embedder: &fakeEmbedder{},
 	}
 
 	// A tight budget that the old renderer would spend entirely on the

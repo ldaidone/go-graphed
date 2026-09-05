@@ -182,8 +182,8 @@ func buildHTMLData(graph *ir.Graph) htmlData {
 // indexed member file. Mirrors the analyzer's clusterDocPaths so the
 // visualizer, clustering, and centrality agree on the document projection.
 func docPaths(graph *ir.Graph, id string) []string {
-	if strings.HasPrefix(id, ir.PackageNodePrefix) {
-		dir := strings.TrimPrefix(id, ir.PackageNodePrefix)
+	if after, ok := strings.CutPrefix(id, ir.PackageNodePrefix); ok {
+		dir := after
 		if pkg, ok := graph.Packages[dir]; ok {
 			return pkg.Files
 		}

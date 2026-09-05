@@ -37,8 +37,8 @@ func extractDockerfileData(path string) ([]ir.Entity, error) {
 
 		// Instruction node types carry a "_instruction" suffix, e.g.
 		// "from_instruction", "run_instruction", "copy_instruction".
-		if strings.HasSuffix(n.Type(lang), "_instruction") {
-			keyword := strings.ToUpper(strings.TrimSuffix(n.Type(lang), "_instruction"))
+		if before, ok := strings.CutSuffix(n.Type(lang), "_instruction"); ok {
+			keyword := strings.ToUpper(before)
 			entity := ir.Entity{
 				ID:   fmt.Sprintf("%s#%s", path, keyword),
 				Type: "instruction",

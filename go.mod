@@ -3,8 +3,7 @@ module github.com/ldaidone/go-graphed
 go 1.26.5
 
 require (
-	github.com/dgraph-io/badger/v4 v4.8.0
-	github.com/ldaidone/goembedx v0.3.0
+	github.com/ldaidone/goembedx v0.4.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/metoro-io/mcp-golang v0.16.1
 	github.com/odvcencio/gotreesitter v0.47.1
@@ -14,13 +13,13 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/xuri/excelize/v2 v2.11.0
-	modernc.org/sqlite v1.56.0
 )
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgraph-io/badger/v4 v4.8.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -68,4 +67,5 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.56.0 // indirect
 )

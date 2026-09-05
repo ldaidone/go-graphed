@@ -19,7 +19,7 @@ import (
 	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/go-graphed/internal/parser"
 	"github.com/ldaidone/go-graphed/internal/scanner"
-	"github.com/ldaidone/go-graphed/internal/utils/vector_store"
+	"github.com/ldaidone/goembedx/pkg/store"
 )
 
 // DefaultSkipEmbedTypes are entity types that do not produce embeddings by
@@ -60,7 +60,7 @@ func Build(opts BuildOptions) error {
 	var docs []ir.Document
 	var graph ir.Graph
 	var dbPath string
-	var store vector_store.Store
+	var vstore *store.SQLite
 
 	ctx := context.Background()
 
@@ -94,9 +94,7 @@ func Build(opts BuildOptions) error {
 	var wg sync.WaitGroup
 
 	for i := 0; i < jobs; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for file := range filesCh {
 				doc, err := parser.Parse(file)
 				mu.Lock()
@@ -108,7 +106,7 @@ func Build(opts BuildOptions) error {
 				}
 				mu.Unlock()
 			}
-		}()
+		})
 	}
 
 	for _, file := range files {
@@ -137,12 +135,12 @@ func Build(opts BuildOptions) error {
 			return fmt.Errorf("failed to determine database path: %w", err)
 		}
 
-		store, err = vector_store.NewSQLiteStore(dbPath)
+		vstore, err = store.NewSQLite(dbPath)
 		if err != nil {
 			return fmt.Errorf("failed to initialize vector store: %w", err)
 		}
-		// Close the underlying Badger database when the build completes
-		defer store.Close()
+		// Close the underlying SQLite database when the build completes
+		defer vstore.Close()
 
 		fmt.Println("[DEBUG] 4.5. Initializing Pure-Go Native Embedder and indexing vectors...")
 
@@ -224,7 +222,7 @@ func Build(opts BuildOptions) error {
 		reused := 0
 		for _, job := range jobs {
 			hash := payloadHash(job.Payload)
-			vec, _, meta, err := store.Get(job.ID)
+			vec, _, meta, err := vstore.Get(job.ID)
 			if err == nil && meta != nil {
 				if existing, ok := meta["payload_hash"].(string); ok && existing == hash && len(vec) > 0 {
 					reused++
@@ -245,14 +243,14 @@ func Build(opts BuildOptions) error {
 		}
 		for i := range dirty {
 			meta := map[string]any{"payload_hash": dirty[i].hash}
-			if err := store.Add(dirty[i].job.ID, vectors[i], meta); err != nil {
+			if err := vstore.Add(dirty[i].job.ID, vectors[i], meta); err != nil {
 				return fmt.Errorf("failed to store vector for %s: %w", dirty[i].job.ID, err)
 			}
 		}
 
 		// Drop vectors whose node no longer exists (file or entity removed),
 		// so stale IDs never leak into semantic search results.
-		pruned, err := pruneStaleVectors(store, jobs)
+		pruned, err := pruneStaleVectors(vstore, jobs)
 		if err != nil {
 			return fmt.Errorf("failed to prune stale vectors: %w", err)
 		}
@@ -319,12 +317,12 @@ func payloadHash(payload string) string {
 // pruneStaleVectors removes every stored vector whose node ID is no longer
 // part of the freshly built graph, so deleted files and entities stop
 // surfacing in semantic search results.
-func pruneStaleVectors(store vector_store.Store, jobs []embedJob) (int, error) {
+func pruneStaleVectors(vstore *store.SQLite, jobs []embedJob) (int, error) {
 	valid := make(map[string]struct{}, len(jobs))
 	for _, job := range jobs {
 		valid[job.ID] = struct{}{}
 	}
-	return store.DeleteStale(valid)
+	return vstore.DeleteStale(valid)
 }
 
 // entitySnippet slices a file's lines covering an entity's start_line/end_line

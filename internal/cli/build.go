@@ -65,9 +65,9 @@ var buildCmd = &cobra.Command{
 // so we silently normalise it rather than rejecting it.
 func cleanSourcePath(source string) string {
 	// If the user specifies the recursive wildcard syntax, e.g., "./..." or "internal/..."
-	if strings.HasSuffix(source, "/...") {
+	if before, ok := strings.CutSuffix(source, "/..."); ok {
 		// Strip off the "/..." suffix to target the parent directory directly
-		source = strings.TrimSuffix(source, "/...")
+		source = before
 	} else if source == "..." {
 		// If they literally just typed "...", treat it as the current directory "."
 		source = "."

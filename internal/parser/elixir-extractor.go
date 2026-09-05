@@ -198,8 +198,8 @@ func (e *elixirExtractor) inspect(n *sitter.Node) {
 		// aggregation key the analyzer groups modules by.
 		if len(e.scopeStack) == 0 {
 			pkg := name
-			if i := strings.Index(name, "."); i >= 0 {
-				pkg = name[:i]
+			if before, _, ok := strings.Cut(name, "."); ok {
+				pkg = before
 			}
 			e.entities = append(e.entities, ir.Entity{
 				ID:   fmt.Sprintf("%s#package:%s", e.path, pkg),
