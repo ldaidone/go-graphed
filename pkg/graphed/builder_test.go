@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/ldaidone/go-graphed/internal/config"
 	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/go-graphed/pkg/graphed"
@@ -191,5 +194,131 @@ func TestBuild_DimensionsMismatchErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "dimension mismatch") {
 		t.Errorf("error = %q, want it to mention the dimension mismatch", err)
+	}
+}
+
+func initGitRepo(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{Author: &object.Signature{Name: "T", Email: "t@x", When: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuild_GitAware_StampsMetadataAndCoChange(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp, map[string]string{
+		"a.go": "package a\n\ntype A struct{}\n",
+		"b.go": "package b\n\ntype B struct{}\n",
+	})
+	output := filepath.Join(t.TempDir(), "graph.json")
+	opts := graphed.BuildOptions{
+		Root:     tmp,
+		Output:   output,
+		Format:   "json",
+		GitAware: true,
+		GitLimit: 10,
+	}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatalf("GitAware Build returned error: %v", err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var graph ir.Graph
+	if err := json.Unmarshal(data, &graph); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Documents) != 2 {
+		t.Fatalf("documents = %d, want 2", len(graph.Documents))
+	}
+	for path, doc := range graph.Documents {
+		if doc.Metadata["git_status"] == "" {
+			t.Errorf("%s missing git_status metadata", path)
+		}
+		if doc.Metadata["git_head"] == "" {
+			t.Errorf("%s missing git_head metadata", path)
+		}
+	}
+	found := false
+	for _, l := range graph.Links {
+		if l.Type == "co_changed" {
+			found = true
+			if l.SourceType != ir.LinkSourceInferred {
+				t.Errorf("co_changed SourceType = %q, want inferred", l.SourceType)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected at least one co_changed link from the shared init commit")
+	}
+}
+
+func TestBuild_ChangedOnly_FiltersToModified(t *testing.T) {
+	tmp := t.TempDir()
+	initGitRepo(t, tmp, map[string]string{
+		"a.go": "package a\n\ntype A struct{}\n",
+		"b.go": "package b\n\ntype B struct{}\n",
+	})
+	// Modify only a.go.
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype A struct{}\n// edit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "graph.json")
+	opts := graphed.BuildOptions{
+		Root:        tmp,
+		Output:      output,
+		Format:      "json",
+		ChangedOnly: true,
+	}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatalf("ChangedOnly Build returned error: %v", err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var graph ir.Graph
+	if err := json.Unmarshal(data, &graph); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Documents) != 1 {
+		t.Fatalf("documents = %d, want 1 (only modified a.go)", len(graph.Documents))
+	}
+	if _, ok := graph.Documents[filepath.Join(tmp, "a.go")]; !ok {
+		t.Errorf("expected modified a.go in graph, got %v", graph.Documents)
+	}
+}
+
+func TestBuild_GitAware_NonRepoDegradesGracefully(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype X struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "graph.json")
+	opts := graphed.BuildOptions{
+		Root:     tmp,
+		Output:   output,
+		Format:   "json",
+		GitAware: true,
+	}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatalf("GitAware on non-repo should degrade gracefully, got: %v", err)
 	}
 }

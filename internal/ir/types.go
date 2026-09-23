@@ -77,10 +77,18 @@ func ClusterID(kind, name string) string {
 // helper utilities without parsing the structured metrics table.
 const MetadataHubFlag = "is_hub"
 
+// CurrentSchemaVersion is the graph.json format version written by this
+// release. Loaders accept missing (pre-v1.0) and newer versions with a
+// warning; only structurally corrupt graphs are rejected.
+const CurrentSchemaVersion = 1
+
 // Graph is the final output of the pipeline. It holds every document
 // discovered during scanning together with the cross-reference links
 // the analyzer inferred between them.
 type Graph struct {
+	// SchemaVersion is the graph.json format version. Missing in
+	// pre-v1.0 snapshots (treated as 0 for warning purposes).
+	SchemaVersion int `json:"schema_version"`
 	// Documents maps each file path to its enriched metadata.
 	// Using a map (instead of a slice) gives O(1) look-ups when
 	// the analyzer needs to resolve source/target IDs.

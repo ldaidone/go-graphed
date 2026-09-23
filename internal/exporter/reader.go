@@ -19,6 +19,9 @@ var (
 )
 
 // LoadGraph reads, streams, and validates a generated JSON graph file into the IR memory model.
+// Version policy (lenient-warn): missing schema_version (pre-v1.0) and
+// newer-than-current versions load with a stderr warning; only
+// structurally corrupt graphs are rejected.
 func LoadGraph(path string) (*ir.Graph, error) {
 	if path == "" {
 		return nil, ErrEmptyGraphFilePath
@@ -31,7 +34,7 @@ func LoadGraph(path string) (*ir.Graph, error) {
 	// Deferred execution handles cleanup even if JSON stream processing panics
 	defer file.Close()
 
-	// 1. Wrap the file reader in a buffered stream buffer (4KB-32KB chunks default).
+	// Wrap the file reader in a buffered stream buffer (4KB-32KB chunks default).
 	// This dramatically reduces system call overhead when processing large code graphs.
 	bufferedReader := bufio.NewReader(file)
 
@@ -45,7 +48,15 @@ func LoadGraph(path string) (*ir.Graph, error) {
 		return nil, fmt.Errorf("malformed graph structural payload: %w", err)
 	}
 
-	// 2. Validate structural contract constraints
+	// Lenient version gate: warn, never fail, on stale or future schemas.
+	switch {
+	case graph.SchemaVersion == 0:
+		fmt.Fprintln(os.Stderr, "warning: graph.json has no schema_version (pre-v1.0 snapshot); reading leniently, rebuild with `kg build` to upgrade")
+	case graph.SchemaVersion > ir.CurrentSchemaVersion:
+		fmt.Fprintf(os.Stderr, "warning: graph.json schema_version=%d is newer than supported v%d; reading leniently\n", graph.SchemaVersion, ir.CurrentSchemaVersion)
+	}
+
+	// Validate structural contract constraints
 	if err := validateGraphStructure(&graph); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCorruptGraphSchema, err)
 	}

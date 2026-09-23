@@ -7,6 +7,7 @@ import (
 	"github.com/ldaidone/go-graphed/internal/exporter"
 	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/go-graphed/internal/mcp"
+	"github.com/ldaidone/go-graphed/pkg/graphed"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,9 @@ var (
 	graphPath    string
 	mcpModelPath string
 	mcpDBRoot    string
+	mcpRoot      string
+	mcpAutoBuild bool
+	mcpGitLimit  int
 )
 
 var mcpCmd = &cobra.Command{
@@ -50,8 +54,12 @@ var mcpCmd = &cobra.Command{
 		}
 
 		srv, err = mcp.NewServer(graph, mcp.Options{
-			ModelPath: cfg.ModelPath,
-			DBRoot:    cfg.DBRoot,
+			ModelPath:   cfg.ModelPath,
+			DBRoot:      cfg.DBRoot,
+			AutoRebuild: mcpAutoBuild,
+			Root:        mcpRoot,
+			GraphFile:   graphPath,
+			Rebuild:     mcpRebuildFunc(cfg, graphPath),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error initializing MCP server: %v\n", err)
@@ -110,5 +118,47 @@ func init() {
 		"Base config directory for the vector store (defaults to ~/.config/graphed)",
 	)
 
+	mcpCmd.Flags().BoolVar(
+		&mcpAutoBuild,
+		"auto-rebuild",
+		false,
+		"Watch the git fingerprint of --root and rebuild in the background when the tree changes (serves the current snapshot meanwhile)",
+	)
+
+	mcpCmd.Flags().StringVar(
+		&mcpRoot,
+		"root",
+		".",
+		"Source tree to fingerprint and rebuild when --auto-rebuild is set",
+	)
+
+	mcpCmd.Flags().IntVar(
+		&mcpGitLimit,
+		"git-limit",
+		50,
+		"Recent commits to mine for co-change links on auto-rebuild (0 = default 50)",
+	)
+
 	RootCmd.AddCommand(mcpCmd)
+}
+
+// mcpRebuildFunc returns the background rebuild closure for --auto-rebuild,
+// or nil when disabled. Rebuilds are git-aware (status/HEAD metadata plus
+// co_changed links) since the fingerprint that triggers them is git-based.
+func mcpRebuildFunc(cfg config.Settings, output string) func() error {
+	if !mcpAutoBuild {
+		return nil
+	}
+	return func() error {
+		return graphed.Build(graphed.BuildOptions{
+			Root:       mcpRoot,
+			Output:     output,
+			Format:     "json",
+			ModelPath:  cfg.ModelPath,
+			Dimensions: cfg.Dimensions,
+			DBRoot:     cfg.DBRoot,
+			GitAware:   true,
+			GitLimit:   mcpGitLimit,
+		})
+	}
 }

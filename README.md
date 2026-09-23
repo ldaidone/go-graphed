@@ -3,9 +3,9 @@
 Language-agnostic knowledge graph generator for source code.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![GoDoc](https://godoc.org/github.com/ldaidone/gomemo?status.svg)](https://pkg.go.dev/github.com/ldaidone/go-graphed)
+[![GoDoc](https://godoc.org/github.com/ldaidone/go-graphed?status.svg)](https://pkg.go.dev/github.com/ldaidone/go-graphed)
 [![GitHub stars](https://img.shields.io/github/stars/ldaidone/go-graphed.svg)](https://github.com/ldaidone/go-graphed/stargazers)
-![Beta](https://img.shields.io/badge/status-beta-yellow)
+![Stable](https://img.shields.io/badge/status-stable-green)
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/leodaido)
 
@@ -42,6 +42,7 @@ Measured, reproducible numbers ([full write-up](docs/BENCHMARK_RESULTS.md)):
 - **Agent-ready MCP server**: `kg mcp` exposes the graph over stdio with tools for document details, links, entity search, cluster inspection, centrality metrics, and hybrid topological + semantic context narrowing
 - **Go-style path support**: Accepts `./...` wildcard syntax familiar to Go developers
 - **Gitignore-aware scanning**: Honors `.gitignore` files plus repeatable `--exclude` and `--ignore-file` patterns, and drops VCS internals (`.git`, `.hg`, `.svn`), binary assets (fonts, images, archives, media), and lockfiles by default to keep corpora focused (disable with `--no-default-skip`)
+- **Git-aware builds (opt-in)**: `--git-aware` stamps `git_status`/`git_head` metadata per document and emits inferred `co_changed` links between files touched by the same recent commits (pure-Go, no git binary); `--changed-only` builds just the working-tree-changed files, `--git-limit` tunes commit depth
 - **Agent-ready setup**: `kg init` emits per-project agent rules **and** per-client MCP configs wiring the server in, and `kg install` puts the binary + model on PATH globally
 
 ## Benchmarks
@@ -68,16 +69,16 @@ files were hand-validated as graph-reachable. Nothing here is an LLM's opinion.
 Full methodology, per-query breakdowns, and known caveats:
 [`docs/BENCHMARK_RESULTS.md`](docs/BENCHMARK_RESULTS.md).
 
-## Known limitations (beta)
+## Known limitations
 
 Owned, not hidden — reproduced and tracked in the benchmark report:
 
-1. **`kg build` can index its own output.** If `graph.json` is written inside the scanned root it is indexed as a JSON document. A self-exclusion fix is planned; the benchmark harness excludes it today.
+1. **`kg build` no longer indexes its own output.** Since v1.0.0 the output file is excluded from the scan by absolute path. The benchmark harness exclusion is now default behavior.
 2. **Kotlin same-package references are unlinked.** A Kotlin service referencing a sibling service in the same package (no `import`) has no graph edge, so it is not 1-hop reachable. Cross-package references work.
 3. **Test files can rank as hubs.** A test-deweighting option for hub ranking is planned.
 4. **`get_narrowed_context` is entry-file-dominant.** A hub entry file's own snippets can exhaust the token budget before neighbor files appear; a per-file snippet cap is under consideration.
 5. **Repo-boundary only.** External APIs, config, and DB schemas are not linked; `extracted`/`inferred` provenance tags make clear what is a fact vs. a heuristic.
-6. **Snapshot staleness.** The graph is a build snapshot — rebuild with `kg build` after significant code changes.
+6. **Snapshot staleness.** The graph is a build snapshot — rebuild with `kg build` after significant code changes, or serve with `kg mcp --auto-rebuild` to refresh in the background when the git tree moves.
 
 ## Installation
 
@@ -122,6 +123,9 @@ make build           # or: go build -o kg ./cmd/kg
 # lockfiles are skipped by default; pass --no-default-skip to index them
 ./kg build . --no-default-skip
 
+# Builds are quiet by default; pass --verbose/-v for per-stage progress on stderr
+./kg build . --verbose
+
 # Parallelize parsing across 8 workers
 ./kg build . --jobs 8
 
@@ -130,6 +134,16 @@ make build           # or: go build -o kg ./cmd/kg
 # skipped by default; pass "" to embed every entity type.
 ./kg build . --embed-skip-types ""
 ./kg build . --embed-skip-types function,method,class,heading
+
+# Opt-in git awareness: status/HEAD metadata + co_changed links (pure-Go),
+# or build only working-tree-changed files
+./kg build . --git-aware
+./kg build . --changed-only --git-limit 20
+
+# Serve with background auto-rebuild: each request checks the git
+# fingerprint of --root and rebuilds when the tree moved (current
+# snapshot keeps serving meanwhile; off by default)
+./kg mcp --file graph.json --auto-rebuild --root .
 
 # Generate a self-contained interactive visualizer (graph.html) and a
 # markdown report (GRAPH_REPORT.md) summarizing hubs, coupling, and clusters
@@ -221,6 +235,7 @@ via its MCP configuration (stdio transport, command `kg mcp`).
 ```bash
 ./kg mcp                 # defaults: --file graph.json, model/db from config
 ./kg mcp --file graph.json --model-path ./get-small.gtemodel
+./kg mcp --file graph.json --auto-rebuild --root .   # background refresh on git changes
 ```
 
 Configure the embedding model path and vector-store directory with
@@ -291,6 +306,7 @@ func main() {
 
 ```json
 {
+    "schema_version": 1,
     "BuiltAt": "2026-08-05T12:00:00Z",
     "Documents": {
         "internal/parser/parser.go": {
