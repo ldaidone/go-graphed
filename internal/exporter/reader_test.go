@@ -158,3 +158,31 @@ func TestValidateGraphStructure_NilGraph(t *testing.T) {
 		t.Error("validateGraphStructure(nil) should return an error")
 	}
 }
+
+func TestLoadGraph_SchemaVersionLenient(t *testing.T) {
+	// Missing version (pre-v1.0): loads with warning, not an error.
+	legacy := `{"documents": {"a.go": {"Path": "a.go", "Format": "golang", "Metadata": {}, "Entities": []}}, "links": []}`
+	loaded, err := LoadGraph(writeGraphFile(t, legacy))
+	if err != nil {
+		t.Fatalf("legacy graph without schema_version should load: %v", err)
+	}
+	if loaded.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d, want 0 for legacy", loaded.SchemaVersion)
+	}
+
+	// Current version loads cleanly.
+	current := `{"schema_version": 1, "documents": {"a.go": {"Path": "a.go", "Format": "golang", "Metadata": {}, "Entities": []}}, "links": []}`
+	if _, err := LoadGraph(writeGraphFile(t, current)); err != nil {
+		t.Fatalf("current schema_version should load: %v", err)
+	}
+
+	// Future version: lenient-warn, still loads.
+	future := `{"schema_version": 999, "documents": {"a.go": {"Path": "a.go", "Format": "golang", "Metadata": {}, "Entities": []}}, "links": []}`
+	loaded, err = LoadGraph(writeGraphFile(t, future))
+	if err != nil {
+		t.Fatalf("future schema_version should load leniently: %v", err)
+	}
+	if loaded.SchemaVersion != 999 {
+		t.Errorf("SchemaVersion = %d, want 999", loaded.SchemaVersion)
+	}
+}

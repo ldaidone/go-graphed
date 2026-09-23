@@ -1,10 +1,12 @@
 package graphed
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ldaidone/go-graphed/internal/ir"
+	"github.com/ldaidone/go-graphed/internal/scanner"
 )
 
 func TestPayloadHash(t *testing.T) {
@@ -115,5 +117,22 @@ func TestSkipEmbedTypes_OverrideReplacesDefault(t *testing.T) {
 	}
 	if !skip["import"] || !skip["package"] {
 		t.Error("import/package must always be skipped")
+	}
+}
+
+func TestExcludeOutputFile(t *testing.T) {
+	out := filepath.Join("tmp", "graph.json")
+	absOut, _ := filepath.Abs(out)
+	files := []scanner.File{
+		{Path: filepath.Join("tmp", "a.go")},
+		{Path: out},
+		{Path: absOut},
+	}
+	kept := excludeOutputFile(files, out)
+	if len(kept) != 1 || kept[0].Path != filepath.Join("tmp", "a.go") {
+		t.Errorf("excludeOutputFile kept %v, want only a.go", kept)
+	}
+	if got := excludeOutputFile(files, ""); len(got) != len(files) {
+		t.Errorf("empty output must keep all files, got %d", len(got))
 	}
 }

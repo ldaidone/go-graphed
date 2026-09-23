@@ -134,12 +134,26 @@ type narrowedJSONSnippet struct {
 
 // --- Registration Pipeline ---
 
+// withRecovery converts a panicking tool handler into a JSON-RPC error so
+// one bad request never kills the whole stdio server session.
+func withRecovery[A any](name string, fn func(A) (*mcp_golang.ToolResponse, error)) func(A) (*mcp_golang.ToolResponse, error) {
+	return func(args A) (resp *mcp_golang.ToolResponse, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				resp = nil
+				err = fmt.Errorf("mcp tool %s panicked: %v", name, r)
+			}
+		}()
+		return fn(args)
+	}
+}
+
 func (s *Server) registerTools() error {
 	// 1. Tool for inspecting document details and its nested entities
 	if err := s.metoroServer.RegisterTool(
 		"get_document_details",
 		"Retrieves metadata properties and extracted AST entities for an explicit file path.",
-		s.handleGetDocumentDetails,
+		guarded(s, "get_document_details", s.handleGetDocumentDetails),
 	); err != nil {
 		return err
 	}
@@ -148,7 +162,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"get_document_links",
 		"Retrieves structural incoming and outgoing semantic links for an analyzed document path.",
-		s.handleGetDocumentLinks,
+		guarded(s, "get_document_links", s.handleGetDocumentLinks),
 	); err != nil {
 		return err
 	}
@@ -157,7 +171,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"list_documents_by_format",
 		"Filters and lists files matching a specific format category.",
-		s.handleListDocumentsByFormat,
+		guarded(s, "list_documents_by_format", s.handleListDocumentsByFormat),
 	); err != nil {
 		return err
 	}
@@ -166,7 +180,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"find_entities_by_type",
 		"Scans the global AST index to locate specific structures like structs or interfaces across all files.",
-		s.handleFindEntitiesByType,
+		guarded(s, "find_entities_by_type", s.handleFindEntitiesByType),
 	); err != nil {
 		return err
 	}
@@ -175,7 +189,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"get_narrowed_context",
 		"Retrieve a narrowed, highly scoped code context using hybrid topological and semantic vector similarity search to conserve LLM token budget.",
-		s.handleGetNarrowedContext,
+		guarded(s, "get_narrowed_context", s.handleGetNarrowedContext),
 	); err != nil {
 		return err
 	}
@@ -185,7 +199,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"list_clusters",
 		"Lists the graph node clusters grouped by directory tree, Go module, or network coupling.",
-		s.handleListClusters,
+		guarded(s, "list_clusters", s.handleListClusters),
 	); err != nil {
 		return err
 	}
@@ -193,7 +207,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"get_cluster",
 		"Retrieves the members and metadata of a specific graph node cluster.",
-		s.handleGetCluster,
+		guarded(s, "get_cluster", s.handleGetCluster),
 	); err != nil {
 		return err
 	}
@@ -202,7 +216,7 @@ func (s *Server) registerTools() error {
 	if err := s.metoroServer.RegisterTool(
 		"get_graph_metrics",
 		"Retrieves global centrality metrics (degree, weighted degree, PageRank) and hub ('God Node') documents computed over the graph.",
-		s.handleGetGraphMetrics,
+		guarded(s, "get_graph_metrics", s.handleGetGraphMetrics),
 	); err != nil {
 		return err
 	}

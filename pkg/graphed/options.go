@@ -54,4 +54,21 @@ type BuildOptions struct {
 	// "package" are always skipped. Pass an explicit list (e.g. an empty
 	// slice) to embed every entity type.
 	SkipEmbedTypes []string
+
+	// Verbose re-enables per-stage progress output on stderr.
+	// Builds are quiet by default so scripted/CI use stays clean.
+	Verbose bool
+
+	// GitAware enriches documents with git status/HEAD metadata and emits
+	// `co_changed` links between files touched by the same recent commits.
+	// Non-git directories degrade gracefully with a stderr warning.
+	GitAware bool
+
+	// ChangedOnly implies GitAware and restricts the scan to files with a
+	// working-tree status (modified, staged, untracked). Requires a git repo.
+	ChangedOnly bool
+
+	// GitLimit caps how many recent commits feed co-change links.
+	// Zero or negative selects the default (50).
+	GitLimit int
 }

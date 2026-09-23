@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/ldaidone/go-graphed/internal/analyzer"
 	"github.com/ldaidone/go-graphed/internal/config"
+	"github.com/ldaidone/go-graphed/internal/git"
 	"github.com/ldaidone/go-graphed/internal/ir"
 	"github.com/ldaidone/goembedx/pkg/embedx"
 	"github.com/ldaidone/goembedx/pkg/store"
@@ -34,6 +37,31 @@ type Options struct {
 	// DBRoot is the base config directory for the vector store. When empty
 	// the default under the user's home directory is used.
 	DBRoot string
+
+	// AutoRebuild enables the freshness bouncer: each request cheaply
+	// checks the git fingerprint of Root, and a dirty tree kicks one
+	// debounced background rebuild while the current snapshot serves.
+	// Default off; explicit `kg build` stays the predictable default.
+	AutoRebuild bool
+
+	// Root is the source tree to fingerprint and rebuild. Required when
+	// AutoRebuild is true.
+	Root string
+
+	// GraphFile is the snapshot path reloaded after a rebuild.
+	GraphFile string
+
+	// GitLimit caps recent commits mined for co-change links on rebuild.
+	GitLimit int
+
+	// Rebuild runs the full pipeline; the CLI wires it to graphed.Build.
+	// Nil disables auto-rebuild even when AutoRebuild is true.
+	Rebuild func() error
+
+	// CheckTTL and Debounce tune the bouncer; zero selects defaults.
+	// Exposed for tests.
+	CheckTTL time.Duration
+	Debounce time.Duration
 }
 
 // Server is the MCP protocol controller exposing a loaded graph as JSON-RPC
@@ -42,10 +70,17 @@ type Options struct {
 // release them.
 type Server struct {
 	metoroServer *mcp_golang.Server
+	mu           sync.RWMutex // guards graph across handlers + background swaps
 	graph        *ir.Graph
 	searcher     embedx.Searcher // Semantic retrieval over the vector store
 	embedder     TextEmbedder    // Native pure-Go embedder wrapper
 	store        *store.SQLite   // Kept alive for the server's lifetime
+
+	autoRebuild     bool
+	refresh         RefreshConfig
+	refreshTTL      time.Duration
+	refreshDebounce time.Duration
+	fresh           freshness
 }
 
 // NewServer builds an instance of the MCP protocol controller bound to the
@@ -86,7 +121,30 @@ func NewServer(graph *ir.Graph, opts Options) (*Server, error) {
 		searcher:     st,
 		embedder:     embedder,
 		store:        st,
+		autoRebuild:  opts.AutoRebuild,
+		refresh: RefreshConfig{
+			Root:      opts.Root,
+			GraphFile: opts.GraphFile,
+			Rebuild:   opts.Rebuild,
+		},
+		refreshTTL:      opts.CheckTTL,
+		refreshDebounce: opts.Debounce,
+		fresh:           freshness{lastFP: initialFingerprint(opts)},
 	}, nil
+}
+
+// initialFingerprint records the tree state at startup so a fresh graph
+// does not trigger a redundant rebuild on the first request. Failures
+// (non-repo) leave it empty, meaning the first dirty check just records.
+func initialFingerprint(opts Options) string {
+	if !opts.AutoRebuild || opts.Root == "" {
+		return ""
+	}
+	fp, err := git.Fingerprint(opts.Root)
+	if err != nil {
+		return ""
+	}
+	return fp
 }
 
 // Close releases the vector store and the native embedding model.
@@ -117,7 +175,13 @@ func (s *Server) Start(ctx context.Context) error {
 	serverErrChan := make(chan error, 1)
 
 	// Execute Metoro server operations in a decoupled goroutine execution path
+	// with panic recovery so a handler bug surfaces as an error, not a dead server.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				serverErrChan <- fmt.Errorf("mcp server panicked: %v", r)
+			}
+		}()
 		fmt.Fprintln(os.Stderr, "MCP Server listening on stdin/stdout...")
 		if err := s.metoroServer.Serve(); err != nil {
 			serverErrChan <- err

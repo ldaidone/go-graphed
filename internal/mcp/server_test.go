@@ -125,3 +125,16 @@ func TestNewServer_BadDBRootFailsFast(t *testing.T) {
 		t.Fatal("expected an error when DBRoot cannot be created")
 	}
 }
+
+func TestWithRecovery_ConvertsPanicToError(t *testing.T) {
+	wrapped := withRecovery("boom", func(args DocumentQueryArgs) (*mcp_golang.ToolResponse, error) {
+		panic("kaboom")
+	})
+	_, err := wrapped(DocumentQueryArgs{Path: "x"})
+	if err == nil {
+		t.Fatal("panicking handler should return an error, not propagate panic")
+	}
+	if !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "kaboom") {
+		t.Errorf("error = %q, want tool name and panic value", err)
+	}
+}

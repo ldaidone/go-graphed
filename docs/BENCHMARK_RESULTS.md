@@ -1,6 +1,6 @@
-# Benchmark Results (beta)
+# Benchmark Results
 
-**Status:** beta. These are the first measured results, collected on
+**Status:** validated for v1.0.0. First measured results collected on
 2026-08-08 with the reproducible harness in
 [`testdata/benchmark/`](../testdata/benchmark/README.md). Every claim below
 can be reproduced; nothing here is an LLM's opinion.
@@ -220,10 +220,7 @@ What they do **not** claim (unmeasured yet — do not quote as results):
 
 ## 6. Known issues & limitations (owned before anyone else points them out)
 
-1. **`kg build` indexes its own output.** When `graph.json` is written inside
-   the scanned root it is indexed as a JSON document (a 3-file fixture went
-   from 8 to 135 entities). The harness excludes it; a self-exclusion fix is
-   planned.
+1. **`kg build` self-exclusion fixed in v1.0.0.** The output file is now excluded from the scan by absolute path; earlier snapshots indexed `graph.json` as a JSON document when written inside the scanned root.
 2. **Inferred links outnumber extracted ones on Kotlin** (878 vs 767). Scoring
    (§4) surfaced a concrete consequence: same-package Kotlin references are
    unlinked, so sibling services aren't 1-hop reachable. The `references`

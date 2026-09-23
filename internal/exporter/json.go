@@ -18,6 +18,9 @@ import (
 // means every caller gets the same guarantee: if JSON() succeeds,
 // the file exists on disk.
 func JSON(graph ir.Graph, output string) error {
+	// Stamp the current format version so loaders can warn on stale or
+	// newer snapshots instead of misreading them silently.
+	graph.SchemaVersion = ir.CurrentSchemaVersion
 	// Ensure the output directory exists -- users may pass a
 	// nested path like "out/graphs/result.json" without pre-creating it.
 	dir := filepath.Dir(output)

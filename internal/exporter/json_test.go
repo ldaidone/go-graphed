@@ -63,6 +63,13 @@ func TestJSON_WritesValidFile(t *testing.T) {
 	if parsed.Links[0].SourceType != ir.LinkSourceExtracted {
 		t.Errorf("parsed link SourceType = %q, want %q", parsed.Links[0].SourceType, ir.LinkSourceExtracted)
 	}
+	if parsed.SchemaVersion != ir.CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", parsed.SchemaVersion, ir.CurrentSchemaVersion)
+	}
+	// Raw payload must carry the versioned format marker.
+	if !bytes.Contains(data, []byte(`"schema_version"`)) {
+		t.Error("graph.json is missing the schema_version field")
+	}
 }
 
 func TestJSON_CreatesNestedDirectories(t *testing.T) {

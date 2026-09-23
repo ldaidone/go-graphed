@@ -20,6 +20,10 @@ var (
 	noGitIgnore   bool
 	noDefaultSkip bool
 	skipEmbed     []string
+	verbose       bool
+	gitAware      bool
+	changedOnly   bool
+	gitLimit      int
 )
 
 // buildCmd is registered under RootCmd in init() below.
@@ -54,6 +58,10 @@ var buildCmd = &cobra.Command{
 			NoGitIgnore:    noGitIgnore,
 			NoDefaultSkip:  noDefaultSkip,
 			SkipEmbedTypes: skipEmbed,
+			Verbose:        verbose,
+			GitAware:       gitAware || changedOnly,
+			ChangedOnly:    changedOnly,
+			GitLimit:       gitLimit,
 		}
 		return graphed.Build(opts)
 	},
@@ -162,6 +170,35 @@ func init() {
 		"no-default-skip",
 		false,
 		"Disable the built-in noise filter (VCS internals, binary assets, lockfiles)",
+	)
+
+	buildCmd.Flags().BoolVarP(
+		&verbose,
+		"verbose",
+		"v",
+		false,
+		"Print per-stage progress to stderr (builds are quiet by default)",
+	)
+
+	buildCmd.Flags().BoolVar(
+		&gitAware,
+		"git-aware",
+		false,
+		"Enrich documents with git status/HEAD metadata and emit co_changed links (pure-Go, no git binary needed)",
+	)
+
+	buildCmd.Flags().BoolVar(
+		&changedOnly,
+		"changed-only",
+		false,
+		"Build only working-tree-changed files (implies --git-aware; requires a git repo)",
+	)
+
+	buildCmd.Flags().IntVar(
+		&gitLimit,
+		"git-limit",
+		50,
+		"Recent commits to mine for co-change links (0 = default 50)",
 	)
 
 	RootCmd.AddCommand(buildCmd)
