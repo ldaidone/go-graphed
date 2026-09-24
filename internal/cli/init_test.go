@@ -1,12 +1,18 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/ldaidone/go-graphed/internal/ir"
 )
 
 func resetInitFlags() {
@@ -16,6 +22,9 @@ func resetInitFlags() {
 	initBuild = false
 	initNoMCP = false
 	initMCPCmd = ""
+	initGitAware = false
+	initChangedOnly = false
+	initGitLimit = 0
 }
 
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -429,5 +438,68 @@ func TestRunInitBuild_ReturnsErrorWhenBuildFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "build failed") {
 		t.Errorf("error = %q, want it to wrap a build failure", err)
+	}
+}
+
+func TestInitCmd_OutputAliasForGraphFile(t *testing.T) {
+	resetInitFlags()
+	defer resetInitFlags()
+	if initCmd.Flags().Lookup("graph-file") == nil {
+		t.Fatal("init is missing the --graph-file flag")
+	}
+	if initCmd.Flags().Lookup("output") == nil {
+		t.Fatal("init is missing the --output alias flag")
+	}
+	if err := initCmd.Flags().Set("output", "custom.json"); err != nil {
+		t.Fatal(err)
+	}
+	if initGraphFile != "custom.json" {
+		t.Errorf("initGraphFile = %q, want %q via --output alias", initGraphFile, "custom.json")
+	}
+}
+
+func TestInitCmd_BuildGitAwareStampsMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"main.go": "package main\n\ntype X struct{}\n",
+	})
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Add("main.go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{Author: &object.Signature{Name: "T", Email: "t@x", When: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+
+	resetInitFlags()
+	defer resetInitFlags()
+	isolateInitEnv(t)
+	initBuild = true
+	initGitAware = true
+	initGraphFile = "graph.json"
+
+	if err := initCmd.RunE(initCmd, []string{dir}); err != nil {
+		t.Fatalf("init --build --git-aware returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "graph.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var graph ir.Graph
+	if err := json.Unmarshal(data, &graph); err != nil {
+		t.Fatal(err)
+	}
+	for path, doc := range graph.Documents {
+		if doc.Metadata["git_head"] == "" {
+			t.Errorf("%s missing git_head metadata from init --build --git-aware", path)
+		}
 	}
 }

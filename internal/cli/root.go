@@ -6,7 +6,7 @@ import "github.com/spf13/cobra"
 
 // Version is the CLI release version reported by `kg --version`.
 // Overridden at link time via -ldflags "-X .../cli.Version=...".
-var Version = "1.0.0"
+var Version = "1.0.1"
 
 // RootCmd is the top-level command that every subcommand attaches to.
 // Defining it here (rather than in an init func) keeps the

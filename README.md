@@ -140,6 +140,12 @@ make build           # or: go build -o kg ./cmd/kg
 ./kg build . --git-aware
 ./kg build . --changed-only --git-limit 20
 
+# Rebuilds update the snapshot in place: fresh files win, unchanged
+# entries are kept (so --changed-only patches the graph), and entries
+# whose files were deleted are dropped. A corrupt graph.json warns
+# and rebuilds fresh instead of aborting. First builds (no snapshot
+# yet) always scan fully, even with --changed-only.
+
 # Serve with background auto-rebuild: each request checks the git
 # fingerprint of --root and rebuilds when the tree moved (current
 # snapshot keeps serving meanwhile; off by default)
@@ -184,6 +190,10 @@ make build           # or: go build -o kg ./cmd/kg
 
 # Build the graph first so the snapshot the rules reference exists
 ./kg init --build
+
+# Build it git-aware (same flags as kg build); --output/-o is an
+# alias for --graph-file
+./kg init --build --git-aware -o out/graph.json
 
 # Rules only — skip writing the client MCP config files below
 ./kg init --no-mcp

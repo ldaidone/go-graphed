@@ -270,39 +270,73 @@ func TestBuild_GitAware_StampsMetadataAndCoChange(t *testing.T) {
 	}
 }
 
-func TestBuild_ChangedOnly_FiltersToModified(t *testing.T) {
+func TestBuild_ChangedOnly_ScopesRescanButKeepsSnapshot(t *testing.T) {
+	// Non-first run: the filter must still scope the rescan (an on-disk
+	// edit to a status-clean file is NOT picked up) while the snapshot
+	// keeps the old entry for it.
 	tmp := t.TempDir()
 	initGitRepo(t, tmp, map[string]string{
 		"a.go": "package a\n\ntype A struct{}\n",
 		"b.go": "package b\n\ntype B struct{}\n",
 	})
-	// Modify only a.go.
-	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype A struct{}\n// edit\n"), 0644); err != nil {
+	output := filepath.Join(t.TempDir(), "graph.json")
+	full := graphed.BuildOptions{Root: tmp, Output: output, Format: "json"}
+	if err := graphed.Build(full); err != nil {
 		t.Fatal(err)
 	}
-	output := filepath.Join(t.TempDir(), "graph.json")
-	opts := graphed.BuildOptions{
-		Root:        tmp,
-		Output:      output,
-		Format:      "json",
-		ChangedOnly: true,
+
+	// a.go: uncommitted edit (status M) -> rescanned.
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype A struct{}\n\ntype A2 struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if err := graphed.Build(opts); err != nil {
-		t.Fatalf("ChangedOnly Build returned error: %v", err)
+	// b.go: edit committed (status clean) -> must NOT be rescanned, but the
+	// old snapshot entry must survive.
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package b\n\ntype B struct{}\n\ntype B2 struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	data, err := os.ReadFile(output)
+	repo, err := gogit.PlainOpen(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var graph ir.Graph
-	if err := json.Unmarshal(data, &graph); err != nil {
+	wt, err := repo.Worktree()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(graph.Documents) != 1 {
-		t.Fatalf("documents = %d, want 1 (only modified a.go)", len(graph.Documents))
+	if _, err := wt.Add("b.go"); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := graph.Documents[filepath.Join(tmp, "a.go")]; !ok {
-		t.Errorf("expected modified a.go in graph, got %v", graph.Documents)
+	if _, err := wt.Commit("b2", &gogit.CommitOptions{Author: &object.Signature{Name: "T", Email: "t@x", When: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := graphed.BuildOptions{Root: tmp, Output: output, Format: "json", ChangedOnly: true}
+	if err := graphed.Build(changed); err != nil {
+		t.Fatalf("ChangedOnly Build returned error: %v", err)
+	}
+	graph := loadGraph(t, output)
+	if len(graph.Documents) != 2 {
+		t.Fatalf("documents = %d, want 2 (snapshot preserved)", len(graph.Documents))
+	}
+	hasEntity := func(path, name string) bool {
+		doc, ok := graph.Documents[path]
+		if !ok {
+			return false
+		}
+		for _, e := range doc.Entities {
+			if e.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasEntity(filepath.Join(tmp, "a.go"), "A2") {
+		t.Error("modified a.go was not rescanned (A2 missing)")
+	}
+	if hasEntity(filepath.Join(tmp, "b.go"), "B2") {
+		t.Error("status-clean b.go must not be rescanned (B2 present)")
+	}
+	if _, ok := graph.Documents[filepath.Join(tmp, "b.go")]; !ok {
+		t.Error("status-clean b.go dropped from snapshot")
 	}
 }
 
@@ -320,5 +354,126 @@ func TestBuild_GitAware_NonRepoDegradesGracefully(t *testing.T) {
 	}
 	if err := graphed.Build(opts); err != nil {
 		t.Fatalf("GitAware on non-repo should degrade gracefully, got: %v", err)
+	}
+}
+
+func loadGraph(t *testing.T, path string) ir.Graph {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var graph ir.Graph
+	if err := json.Unmarshal(data, &graph); err != nil {
+		t.Fatal(err)
+	}
+	return graph
+}
+
+func TestBuild_ChangedOnlyPatchesExistingSnapshot(t *testing.T) {
+	// The init-then-changed-only scenario: a full snapshot exists, a
+	// changed-only rebuild must patch it, not shrink it to changed files.
+	tmp := t.TempDir()
+	initGitRepo(t, tmp, map[string]string{
+		"a.go": "package a\n\ntype A struct{}\n",
+		"b.go": "package b\n\ntype B struct{}\n",
+	})
+	output := filepath.Join(t.TempDir(), "graph.json")
+	full := graphed.BuildOptions{Root: tmp, Output: output, Format: "json"}
+	if err := graphed.Build(full); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadGraph(t, output); len(got.Documents) != 2 {
+		t.Fatalf("full build documents = %d, want 2", len(got.Documents))
+	}
+
+	// Modify only a.go (adding a struct), then rebuild changed-only.
+	aPath := filepath.Join(tmp, "a.go")
+	if err := os.WriteFile(aPath, []byte("package a\n\ntype A struct{}\n\ntype A2 struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	changed := graphed.BuildOptions{Root: tmp, Output: output, Format: "json", ChangedOnly: true}
+	if err := graphed.Build(changed); err != nil {
+		t.Fatal(err)
+	}
+	graph := loadGraph(t, output)
+	if len(graph.Documents) != 2 {
+		t.Fatalf("patched documents = %d, want 2 (b.go must survive)", len(graph.Documents))
+	}
+	aDoc, ok := graph.Documents[aPath]
+	if !ok {
+		t.Fatalf("modified a.go missing after patch, got %v", graph.Documents)
+	}
+	found := false
+	for _, e := range aDoc.Entities {
+		if e.Name == "A2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a.go entities %v do not include the fresh A2 struct", aDoc.Entities)
+	}
+	if _, ok := graph.Documents[filepath.Join(tmp, "b.go")]; !ok {
+		t.Error("unchanged b.go dropped by changed-only rebuild")
+	}
+}
+
+func TestBuild_ChangedOnlyFirstRunScansFully(t *testing.T) {
+	// Fresh clone scenario: clean tree (nothing changed), no snapshot yet.
+	// --changed-only must fall back to a full scan, not write an empty graph.
+	tmp := t.TempDir()
+	initGitRepo(t, tmp, map[string]string{
+		"a.go": "package a\n\ntype A struct{}\n",
+		"b.go": "package b\n\ntype B struct{}\n",
+	})
+	output := filepath.Join(t.TempDir(), "graph.json")
+	opts := graphed.BuildOptions{Root: tmp, Output: output, Format: "json", ChangedOnly: true}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadGraph(t, output); len(got.Documents) != 2 {
+		t.Errorf("first-run changed-only documents = %d, want 2 (full scan)", len(got.Documents))
+	}
+}
+
+func TestBuild_DropsDeletedFiles(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype A struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "b.go"), []byte("package b\n\ntype B struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "graph.json")
+	opts := graphed.BuildOptions{Root: tmp, Output: output, Format: "json"}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(tmp, "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadGraph(t, output); len(got.Documents) != 1 {
+		t.Errorf("documents after delete = %d, want 1", len(got.Documents))
+	}
+}
+
+func TestBuild_CorruptSnapshotBuildsFresh(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "a.go"), []byte("package a\n\ntype A struct{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "graph.json")
+	if err := os.WriteFile(output, []byte(`{"documents": `), 0644); err != nil {
+		t.Fatal(err)
+	}
+	opts := graphed.BuildOptions{Root: tmp, Output: output, Format: "json"}
+	if err := graphed.Build(opts); err != nil {
+		t.Fatalf("corrupt snapshot should degrade to a fresh build, got: %v", err)
+	}
+	if got := loadGraph(t, output); len(got.Documents) != 1 {
+		t.Errorf("documents = %d, want 1", len(got.Documents))
 	}
 }

@@ -1,6 +1,7 @@
 package graphed
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,5 +135,22 @@ func TestExcludeOutputFile(t *testing.T) {
 	}
 	if got := excludeOutputFile(files, ""); len(got) != len(files) {
 		t.Errorf("empty output must keep all files, got %d", len(got))
+	}
+}
+
+func TestIsFirstBuild(t *testing.T) {
+	if isFirstBuild("") {
+		t.Error("empty output must never count as a first build")
+	}
+	missing := filepath.Join(t.TempDir(), "graph.json")
+	if !isFirstBuild(missing) {
+		t.Errorf("missing %s should count as a first build", missing)
+	}
+	existing := filepath.Join(t.TempDir(), "graph.json")
+	if err := os.WriteFile(existing, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if isFirstBuild(existing) {
+		t.Error("existing file must not count as a first build")
 	}
 }

@@ -14,12 +14,15 @@ import (
 )
 
 var (
-	initGraphFile string
-	initAll       bool
-	initTargets   []string
-	initBuild     bool
-	initNoMCP     bool
-	initMCPCmd    string
+	initGraphFile   string
+	initAll         bool
+	initTargets     []string
+	initBuild       bool
+	initNoMCP       bool
+	initMCPCmd      string
+	initGitAware    bool
+	initChangedOnly bool
+	initGitLimit    int
 )
 
 // Markers that wrap the kg rules inside a rule file. They make kg init
@@ -205,12 +208,15 @@ func runInitBuild(dir, graphFile string) error {
 	}
 
 	opts := graphed.BuildOptions{
-		Root:       dir,
-		Output:     filepath.Join(dir, graphFile),
-		Format:     "json",
-		ModelPath:  cfg.ModelPath,
-		Dimensions: cfg.Dimensions,
-		DBRoot:     cfg.DBRoot,
+		Root:        dir,
+		Output:      filepath.Join(dir, graphFile),
+		Format:      "json",
+		ModelPath:   cfg.ModelPath,
+		Dimensions:  cfg.Dimensions,
+		DBRoot:      cfg.DBRoot,
+		GitAware:    initGitAware || initChangedOnly,
+		ChangedOnly: initChangedOnly,
+		GitLimit:    initGitLimit,
 	}
 	if err := graphed.Build(opts); err != nil {
 		return fmt.Errorf("build failed: %w", err)
@@ -511,7 +517,38 @@ func init() {
 		&initGraphFile,
 		"graph-file",
 		"graph.json",
-		"Path to the graph the MCP server loads (interpolated into the rule files)",
+		"Path to the graph the MCP server loads (interpolated into the rule files; same file as kg build --output)",
+	)
+
+	// --output/-o is an alias for --graph-file so `kg init --build -o out.json`
+	// and `kg build -o out.json` spell the same snapshot the same way.
+	initCmd.Flags().StringVarP(
+		&initGraphFile,
+		"output",
+		"o",
+		"graph.json",
+		"Alias for --graph-file",
+	)
+
+	initCmd.Flags().BoolVar(
+		&initGitAware,
+		"git-aware",
+		false,
+		"Enrich the --build graph with git status/HEAD metadata and co_changed links (pure-Go, no git binary needed)",
+	)
+
+	initCmd.Flags().BoolVar(
+		&initChangedOnly,
+		"changed-only",
+		false,
+		"Build only working-tree-changed files (implies --git-aware; requires a git repo)",
+	)
+
+	initCmd.Flags().IntVar(
+		&initGitLimit,
+		"git-limit",
+		50,
+		"Recent commits to mine for co-change links on --build (0 = default 50)",
 	)
 
 	initCmd.Flags().BoolVar(
