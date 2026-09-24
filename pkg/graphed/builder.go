@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,11 +89,19 @@ func Build(opts BuildOptions) error {
 
 	// git-aware filtering. ChangedOnly restricts the
 	// scan to working-tree-changed files; it requires a git repo.
-	if opts.ChangedOnly || opts.GitAware {
+	// First builds (no snapshot at the output path yet, e.g. `kg init
+	// --build --changed-only` on a fresh clone) always scan fully: a
+	// changed-only filter on a clean tree would write a near-empty graph.
+	changedOnly := opts.ChangedOnly
+	if changedOnly && isFirstBuild(opts.Output) {
+		fmt.Fprintln(os.Stderr, "note: no existing snapshot, running full scan despite --changed-only")
+		changedOnly = false
+	}
+	if changedOnly || opts.GitAware {
 		var gitErr error
-		files, gitErr = applyGitScope(files, opts.Root, opts.ChangedOnly)
+		files, gitErr = applyGitScope(files, opts.Root, changedOnly)
 		if gitErr != nil {
-			if opts.ChangedOnly {
+			if changedOnly {
 				return gitErr
 			}
 			fmt.Fprintln(os.Stderr, "warning: git-aware build continuing without git:", gitErr)
@@ -140,6 +149,13 @@ func Build(opts BuildOptions) error {
 		return firstErr
 	}
 	verbosef(opts.Verbose, "3. Total documents parsed: %d\n", len(docs))
+
+	// Stage 2.5: merge with the existing snapshot so rebuilds update rather
+	// than replace. Freshly parsed documents win; entries whose files still
+	// exist on disk but fell outside this scan (changed-only filter,
+	// narrower root, excludes) are kept; entries whose files are gone are
+	// dropped. Links recompute over the merged set in Stage 3.
+	docs = mergeWithExisting(opts.Root, opts.Output, docs, opts.Verbose)
 
 	// Assemble documents into a graph and infer links.
 	graph, err = analyzer.Build(docs)
@@ -326,6 +342,76 @@ func verbosef(verbose bool, format string, args ...any) {
 	if verbose {
 		fmt.Fprintf(os.Stderr, format, args...)
 	}
+}
+
+// mergeWithExisting overlays freshly parsed documents onto the snapshot at
+// output, if it exists and loads. Fresh documents always win on path
+// conflict. Old entries survive when their file still exists on disk but was
+// outside this scan's scope (the --changed-only filter, a narrower root, or
+// exclude patterns); they are dropped only when the file is gone. A missing
+// snapshot is a first build (silent); an unreadable one warns and builds
+// fresh so a corrupt graph.json never blocks a rebuild.
+func mergeWithExisting(root, output string, fresh []ir.Document, verbose bool) []ir.Document {
+	if output == "" {
+		return fresh
+	}
+	old, err := exporter.LoadGraph(output)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fresh // first build: no snapshot yet
+		}
+		fmt.Fprintln(os.Stderr, "warning: existing snapshot unreadable, building fresh:", err)
+		return fresh
+	}
+	freshByPath := make(map[string]struct{}, len(fresh))
+	for _, d := range fresh {
+		freshByPath[d.Path] = struct{}{}
+	}
+	merged := make([]ir.Document, 0, len(fresh)+len(old.Documents))
+	merged = append(merged, fresh...)
+	kept, dropped := 0, 0
+	for path, doc := range old.Documents {
+		if doc == nil {
+			dropped++
+			continue
+		}
+		if _, ok := freshByPath[path]; ok {
+			continue // fresh parse wins
+		}
+		if fileExistsOnDisk(root, path) {
+			merged = append(merged, *doc)
+			kept++
+		} else {
+			dropped++
+		}
+	}
+	verbosef(verbose, "2.5. Snapshot merge: %d fresh, %d kept, %d dropped\n", len(fresh), kept, dropped)
+	return merged
+}
+
+// fileExistsOnDisk reports whether path still exists, resolving relative
+// paths against both the process cwd and the scan root so rebuilds from a
+// different cwd do not misread old relative entries as deleted.
+func fileExistsOnDisk(root, path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	if !filepath.IsAbs(path) && root != "" {
+		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// isFirstBuild reports whether no snapshot exists at output yet. An empty
+// output path never counts as a first build; callers validate it later.
+func isFirstBuild(output string) bool {
+	if output == "" {
+		return false
+	}
+	_, err := os.Stat(output)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 // applyGitScope optionally restricts files to working-tree-changed paths.

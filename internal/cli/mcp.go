@@ -17,12 +17,13 @@ import (
 )
 
 var (
-	graphPath    string
-	mcpModelPath string
-	mcpDBRoot    string
-	mcpRoot      string
-	mcpAutoBuild bool
-	mcpGitLimit  int
+	graphPath      string
+	mcpModelPath   string
+	mcpDBRoot      string
+	mcpRoot        string
+	mcpAutoBuild   bool
+	mcpGitLimit    int
+	mcpChangedOnly bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -139,6 +140,13 @@ func init() {
 		"Recent commits to mine for co-change links on auto-rebuild (0 = default 50)",
 	)
 
+	mcpCmd.Flags().BoolVar(
+		&mcpChangedOnly,
+		"changed-only",
+		false,
+		"Patch only working-tree-changed files on auto-rebuild (faster on large repos; safe since rebuilds merge into the snapshot)",
+	)
+
 	RootCmd.AddCommand(mcpCmd)
 }
 
@@ -151,14 +159,15 @@ func mcpRebuildFunc(cfg config.Settings, output string) func() error {
 	}
 	return func() error {
 		return graphed.Build(graphed.BuildOptions{
-			Root:       mcpRoot,
-			Output:     output,
-			Format:     "json",
-			ModelPath:  cfg.ModelPath,
-			Dimensions: cfg.Dimensions,
-			DBRoot:     cfg.DBRoot,
-			GitAware:   true,
-			GitLimit:   mcpGitLimit,
+			Root:        mcpRoot,
+			Output:      output,
+			Format:      "json",
+			ModelPath:   cfg.ModelPath,
+			Dimensions:  cfg.Dimensions,
+			DBRoot:      cfg.DBRoot,
+			GitAware:    true,
+			ChangedOnly: mcpChangedOnly,
+			GitLimit:    mcpGitLimit,
 		})
 	}
 }

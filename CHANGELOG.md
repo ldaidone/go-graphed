@@ -5,12 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v1.0.1] - 2026-09-24
+
+### Fixed
+
+- Rebuilds now update the existing snapshot instead of replacing it: freshly parsed documents win, entries for files that still exist but fell outside the scan (`--changed-only`, narrower roots, excludes) are kept, and entries for deleted files are dropped. A corrupt `graph.json` warns and rebuilds fresh. First builds (no snapshot yet) always scan fully, even with `--changed-only`.
 
 ### Added
 
 - Opt-in git awareness (`--git-aware`, `--changed-only`, `--git-limit`): pure-Go (go-git, no binary needed) working-tree status + HEAD metadata per document and inferred `co_changed` links from recent commits. Non-repos degrade to a warning.
 - MCP `--auto-rebuild` bouncer (off by default): per-request git fingerprint check against `--root`; dirty trees kick one debounced background rebuild (singleflight) while the current snapshot serves, then hot-swap. Shared `git.Fingerprint` helper ready for the future `query` command.
+- `kg init` parity: `--git-aware` / `--changed-only` / `--git-limit` passthrough for `--build`, plus `--output`/`-o` as an alias for `--graph-file` so both commands spell the snapshot path the same way.
 
 ### Changed
 
@@ -84,6 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   patterns and parallel (worker-pool) parsing.
 - **Benchmark harness** under `testdata/benchmark/` and benchmark report.
 
-[Unreleased]: https://github.com/ldaidone/go-graphed/compare/v0.1.0-beta.2...HEAD
+[Unreleased]: https://github.com/ldaidone/go-graphed/compare/v1.0.1...HEAD
+[v1.0.1]: https://github.com/ldaidone/go-graphed/compare/v1.0.0...v1.0.1
+[v1.0.0]: https://github.com/ldaidone/go-graphed/compare/v0.1.0-beta.2...v1.0.0
 [v0.1.0-beta.2]: https://github.com/ldaidone/go-graphed/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [v0.1.0-beta.1]: https://github.com/ldaidone/go-graphed/releases/tag/v0.1.0-beta.1
